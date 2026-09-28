@@ -1,0 +1,156 @@
+# lincheck
+
+**线性一致性检查器：判断一段并发历史是否合法，并在违规时给出最小反例。**
+
+[![MoonBit](https://img.shields.io/badge/MoonBit-0.1.20261012-blueviolet)](https://www.moonbitlang.com/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+---
+
+## 问题
+
+两个线程同时操作一个变量：
+
+```
+线程 A:  x = 1        [  0 ── 10  ]
+线程 B:  x = 2        [      5 ── 15 ]
+线程 A:  print(x)     [             20 ── 30 ]
+```
+
+A 最后打印出 `2`，合理——B 的写在 A 的读之前就完成了。
+
+如果打印出 `1` 呢？**不可能**。B 的写（5–15）在 A 的读（20–30）之前结束，没有任何"瞬间"能让 A 读到旧值。
+
+**线性一致性（linearizability）** 就是这个直觉的形式化：
+
+> 存在一个全序，使得每个操作在它"开始到结束之间"的某一点原子生效，且该全序下的结果符合对象的顺序语义。
+
+通俗说：**虽然操作是并发的，但你必须能把它排成一个队，让每个操作看起来在某个瞬间原子地完成。**
+
+这是并发对象的黄金标准，比顺序一致性更强（它尊重真实时间），也是所有分布式数据库承诺的隔离级别。
+
+## 为什么需要工具
+
+2013 年起，Kyle Kingsbury 的 **Jepsen** 给数据库注入网络分区、时钟偏移、进程暂停，然后检查它们是否真的满足自己宣称的一致性。结果：MongoDB、Cassandra、etcd、Redis（Redlock）、RabbitMQ、Elasticsearch……几乎每个主流系统都被找到过真实的数据丢失。
+
+手工检查不现实。100 个操作有天文数字种可能的排序——需要算法。
+
+## 快速开始
+
+```bash
+moon check
+moon test
+
+# 检查一份历史
+moon run cmd/lincheck -- check --history examples/register_ok.jsonl --model register
+
+# 看时间轴
+moon run cmd/lincheck -- visualize --history examples/register_bad.jsonl
+
+# 自检：生成的合法历史必须全部通过
+moon run cmd/lincheck -- selfcheck --model register --seeds 100
+```
+
+## 命令
+
+```bash
+lincheck check     --history <file.jsonl> --model register|counter|set|queue [--budget-ms N] [--json]
+lincheck minimize  --history <file.jsonl> --model register
+lincheck visualize --history <file.jsonl>
+lincheck gen       --model register --processes 3 --ops 10 --seed 42 --consistent
+lincheck selfcheck --model register --seeds 100
+```
+
+退出码：`0` 线性一致 / `1` 发现违规 / `2` 用法错误 / `3` 结论未知。
+
+## 历史格式
+
+每行一个操作：
+
+```json
+{"id":0,"process":0,"kind":{"tag":"Write","value":1},"result":{"tag":"Ok"},"start":0,"end":10}
+```
+
+`start`/`end` 是逻辑时间戳（同一时钟），区间重叠即视为并发。
+
+## 算法：Wing-Gong-Lowe
+
+检查"是否存在合法全序"是 NP 难的，但实际历史可以秒出结果。
+
+**基本搜索**：
+
+```
+已线性化 = {}
+当前状态 = 初始状态
+
+每步:
+    候选 = 所有满足条件的未完成操作:
+           它的 start ≤ 所有"尚未线性化"操作的最小 end
+    对每个候选（按 start 排序保证确定性）:
+        若 apply(当前状态, op) 的期望返回值 == op.result:
+            递归(下一状态, 已线性化 ∪ {op})
+        否则剪枝
+```
+
+以开头的例子验证：`x=1[0,10]`、`x=2[5,15]`、`read→1[20,30]`
+
+- 初始两个写都可作候选
+- 试 `x=1` → 状态 `{x:1}` → 试 `x=2` → 状态 `{x:2}` → 读到 2 ≠ 1，剪枝
+- 回溯，先试 `x=2` → 状态 `{x:2}` → 再试 `x=1` → 状态 `{x:1}` → 读到 1 ✓
+- 但 `x=2.end=15 < read.start=20`，read 必须排在 x=2 之后，这个约束自然排除了该顺序
+- 所有分支走完 → **判定非线性一致**
+
+**关键优化（Lowe 2017）**：缓存 `(当前状态哈希, 剩余操作集合哈希) → 结果`。没有它复杂度是操作数的阶乘；有了它，上百个操作的实际历史通常一秒内出结果。
+
+## 最小反例
+
+Jepsen 的报告动辄几千行，人能看懂的往往只有五行。`lincheck` 在发现违规后做 **delta debugging**：反复尝试删掉操作，只要仍然违规就保留删除，最终得到最小子集。
+
+输出示例：
+
+```
+✗ NON-LINEARIZABLE  (8 of 34 operations)
+
+  操作 3: proc 1  Write(1)   [ 10 .. 25 ]
+  操作 7: proc 0  Read → 0   [ 30 .. 40 ]     ← 期望 1，实得 0
+
+  Write(1) 在 25 时刻完成，Read 在 30 时刻开始，二者不并发。
+  任何合法全序都必须先执行 Write(1)，因此 Read 必须返回 1。
+```
+
+## 设计要点
+
+**状态用整数向量。** `State = Array[Int]` 而不是泛型，让哈希缓存高效、实现简单。每个模型约定自己的编码。
+
+**确定性优先。** 候选按 `start` 排序、哈希用固定算法、生成器用固定种子。同一输入两次运行必须输出完全相同——否则 bug 无法复现。
+
+**未知是合法结论。** 搜索超预算时返回 `Unknown` 而不是猜，也不是挂死。这在生产历史（可能几十万操作）上很重要。
+
+**生成器服务于元测试。** `generate_consistent` 先在单一全序下执行、再随机拉宽时间区间，保证产物一定线性一致。用 200 个这样的历史检验检查器——这是验证检查器本身正确性的核心手段。
+
+## 项目结构
+
+```
+src/
+  history.mbt      Operation / History / 并发判定 / JSONL
+  model.mbt        Model trait / State / 内建模型
+  checker.mbt      WGL 搜索 + 状态缓存
+  minimize.mbt     delta debugging 最小化
+  generate.mbt     历史生成与故障注入
+  visualize.mbt    文本时间轴
+cmd/lincheck/
+  main.mbt         CLI
+```
+
+详细 API 见 [API.md](API.md)。
+
+## 背景资料
+
+- M. P. Herlihy, J. M. Wing, *Linearizability: A Correctness Condition for Concurrent Objects*, TOPLAS 1990
+- J. M. Wing, C. Gong, *Testing and Verifying Concurrent Objects*, 1993
+- G. Lowe, *Testing for Linearizability*, Concurrency and Computation 2017
+- K. Kingsbury, *Jepsen* — https://jepsen.io
+
+## License
+
+Apache-2.0，见 [LICENSE](LICENSE)。
