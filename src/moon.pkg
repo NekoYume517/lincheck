@@ -1,5 +1,11 @@
 import {
-  "moonbitlang/core/json" @json,
+  "moonbitlang/core/json",
+  "moonbitlang/core/env",
+  "moonbitlang/core/debug",
 }
 
 pkgtype(kind: "library")
+
+options(
+  warn_list: "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated",
+)
