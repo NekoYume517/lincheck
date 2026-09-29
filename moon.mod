@@ -8,7 +8,13 @@ repository = "https://github.com/moonbit-hack/lincheck"
 
 license = "Apache-2.0"
 
-keywords = ["concurrency", "linearizability", "testing", "verification", "jepsen"]
+keywords = [
+  "concurrency",
+  "linearizability",
+  "testing",
+  "verification",
+  "jepsen",
+]
 
 preferred_target = "wasm"
 
