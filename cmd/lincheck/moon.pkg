@@ -7,3 +7,5 @@ import {
 }
 
 pkgtype(kind: "executable")
+
+warnings = "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated"

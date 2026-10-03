@@ -1,0 +1,14 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbit-hack/lincheck/cmd/lincheck"
+
+// Values
+
+// Errors
+type Failure
+
+// Types and methods
+type Cli
+
+// Type aliases
+
+// Traits

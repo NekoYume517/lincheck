@@ -6,6 +6,4 @@ import {
 
 pkgtype(kind: "library")
 
-options(
-  warn_list: "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated",
-)
+warnings = "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated"
