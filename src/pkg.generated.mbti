@@ -1,0 +1,244 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbit-hack/lincheck/src"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub const MIN_WITNESS : Int = 2
+
+pub fn[M : Model] candidate_accepted(Array[Operation], Array[Operation], M, CheckConfig, Int, Expl?) -> Bool
+
+pub fn check(History, AnyModel, CheckConfig) -> CheckOutcome
+
+pub fn check_any(History, AnyModel, CheckConfig) -> CheckOutcome
+
+pub fn check_default(History, AnyModel) -> CheckOutcome
+
+pub fn[M : Model] check_with(History, M, CheckConfig) -> CheckOutcome
+
+pub fn[M : Model] check_with_stats(History, M, CheckConfig) -> (CheckOutcome, CheckStats)
+
+pub fn clip(String, Int) -> String
+
+pub fn concurrent(Operation, Operation) -> Bool
+
+pub fn counter_model() -> CounterModel
+
+pub fn[M : Model] ddmin(Array[Operation], M, CheckConfig, Int) -> Array[Operation]
+
+pub fn[M : Model] ddmin_bounded(Array[Operation], M, CheckConfig, Int, Int, Expl?) -> Array[Operation]
+
+pub fn[M : Model] explainable(Array[Operation], M, CheckConfig, Expl) -> Bool
+
+pub fn format_op(Operation) -> String
+
+pub fn format_op_kind(OpKind) -> String
+
+pub fn format_op_result(OpResult) -> String
+
+pub fn[M : Model] generate_consistent(M, GenConfig) -> History
+
+pub fn[M : Model] generate_random(M, GenConfig) -> History
+
+pub fn happens_before(Operation, Operation) -> Bool
+
+pub fn inject_violation(History, AnyModel, Int) -> History
+
+pub fn kind_label(OpKind) -> String
+
+pub fn minimize(History, AnyModel, CheckConfig) -> Violation
+
+pub fn minimize_by_process(History, AnyModel) -> Violation
+
+pub fn[M : Model] minimize_by_process_with(History, M, Int) -> Violation
+
+pub fn minimize_raw(History, AnyModel, CheckConfig) -> Violation
+
+pub fn[M : Model] minimize_with(History, M, CheckConfig) -> Violation
+
+pub fn[M : Model] minimize_with_bound(History, M, CheckConfig, Int) -> Violation
+
+pub fn model_by_name(String) -> AnyModel
+
+pub fn model_names() -> Array[String]
+
+pub fn op_line(Operation) -> String
+
+pub fn op_summary(Operation) -> String
+
+pub fn ops_to_history(Array[Operation]) -> History
+
+pub fn order_facts(Array[Operation]) -> String
+
+pub fn pad_right(String, Int) -> String
+
+pub fn poly_hash(Array[Int]) -> Int
+
+pub fn[M : Model] probe_ops(Array[Operation], M, CheckConfig) -> CheckOutcome
+
+pub fn process_ids(History) -> Array[Int]
+
+pub fn queue_model() -> QueueModel
+
+pub fn register_model() -> RegisterModel
+
+pub fn remove_chunk(Array[Operation], Int, Int) -> Array[Operation]
+
+pub fn render_timeline(History) -> String
+
+pub fn render_violation(Violation, History) -> String
+
+pub fn repeat_char(Char, Int) -> String
+
+pub fn result_label(OpResult) -> String
+
+pub fn set_model() -> SetModel
+
+pub fn[M : Model] shrink(Array[Operation], M, CheckConfig, Int, Expl) -> Array[Operation]
+
+pub fn sort_ops_by_id(Array[Operation]) -> Array[Operation]
+
+pub fn state_copy(Array[Int]) -> Array[Int]
+
+pub fn state_to_string(Array[Int]) -> String
+
+pub fn states_equal(Array[Int], Array[Int]) -> Bool
+
+pub fn[M : Model] still_violates(Array[Operation], M, CheckConfig) -> Bool
+
+// Errors
+pub(all) suberror HistoryError {
+  BadLine(Int, String)
+} derive(@debug.Debug)
+
+// Types and methods
+pub(all) enum AnyModel {
+  Register(RegisterModel)
+  Counter(CounterModel)
+  Set(SetModel)
+  Queue(QueueModel)
+} derive(@debug.Debug)
+pub impl Model for AnyModel
+
+pub(all) struct CheckConfig {
+  time_budget_ms : Int
+  max_states : Int
+  allow_unknown_results : Bool
+} derive(@debug.Debug)
+pub fn CheckConfig::default() -> Self
+
+pub(all) enum CheckOutcome {
+  Linearizable
+  Violation(Violation)
+  Unknown(String)
+} derive(@debug.Debug)
+
+pub(all) struct CheckStats {
+  explored : Int
+  cache_hits : Int
+  cache_size : Int
+  timed_out : Bool
+} derive(@debug.Debug)
+
+pub(all) struct CounterModel {
+} derive(@debug.Debug)
+pub impl Model for CounterModel
+
+pub(all) struct Expl {
+  illegal : Map[Int, Bool]
+  pairs : Map[Int, Bool]
+}
+pub fn[M : Model] Expl::is_illegal(Self, Operation, M, CheckConfig) -> Bool
+pub fn Expl::new() -> Self
+pub fn[M : Model] Expl::pair_explains(Self, Operation, Operation, M, CheckConfig) -> Bool
+
+pub(all) struct GenConfig {
+  processes : Int
+  ops_per_process : Int
+  seed : Int
+  concurrency : Double
+}
+pub fn GenConfig::default() -> Self
+pub fn GenConfig::new(Int, Int, Int, Double) -> Self
+
+pub(all) struct History {
+  operations : Array[Operation]
+}
+pub fn History::add(Self, Operation) -> Unit
+pub fn History::from_jsonl(StringView) -> Result[Self, HistoryError] raise
+pub fn History::length(Self) -> Int
+pub fn History::new() -> Self
+pub fn History::sort_by_start(Self) -> Self
+pub fn History::to_jsonl(Self) -> String
+
+pub(all) enum OpKind {
+  Write(Int)
+  Read
+  Cas(Int, Int)
+  Append(Int)
+  Pop
+} derive(Eq, @debug.Debug)
+
+pub(all) enum OpResult {
+  Ok
+  Value(Int)
+  Bool(Bool)
+  Empty
+  Nil
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Operation {
+  id : Int
+  process : Int
+  kind : OpKind
+  result : OpResult
+  start : Int64
+  end : Int64
+} derive(@debug.Debug)
+
+pub(all) struct QueueModel {
+} derive(@debug.Debug)
+pub impl Model for QueueModel
+
+pub(all) struct RegisterModel {
+} derive(@debug.Debug)
+pub impl Model for RegisterModel
+
+pub(all) struct Rng {
+  mut state : Int
+}
+pub fn Rng::below(Self, Int) -> Int
+pub fn Rng::chance(Self, Double) -> Bool
+pub fn Rng::new(Int) -> Self
+pub fn Rng::next(Self) -> Int
+pub fn Rng::unit(Self) -> Double
+
+type RowLayout
+
+type SearchState
+
+pub(all) struct SetModel {
+} derive(@debug.Debug)
+pub impl Model for SetModel
+
+pub(all) struct Violation {
+  ops : Array[Operation]
+  depth : Int
+  explanation : String
+} derive(@debug.Debug)
+
+// Type aliases
+pub type OpId = Int
+
+pub type State = Array[Int]
+
+// Traits
+pub trait Model {
+  fn name(Self) -> String
+  fn init(Self) -> Array[Int]
+  fn apply(Self, Array[Int], OpKind) -> (Array[Int], OpResult)?
+  fn state_eq(Self, Array[Int], Array[Int]) -> Bool
+  fn state_hash(Self, Array[Int]) -> Int
+}
