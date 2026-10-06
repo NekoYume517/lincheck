@@ -1,5 +1,5 @@
 import {
-  "moonbit-hack/lincheck/src" @lib,
+  "NekoYume517/lincheck/src" @lib,
   "moonbitlang/x/fs",
   "moonbitlang/x/sys",
   "moonbitlang/core/env",
@@ -9,3 +9,4 @@ import {
 pkgtype(kind: "executable")
 
 warnings = "-implicit_impl_as_method-unused_package-test_unqualified_package-deprecated"
+
