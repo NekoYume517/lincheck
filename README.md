@@ -51,6 +51,7 @@ moon run cmd/lincheck -- visualize --history examples/register_bad.jsonl
 moon run cmd/lincheck -- selfcheck --model register --seeds 100
 ```
 
+
 ## 命令
 
 ```bash
@@ -61,7 +62,17 @@ lincheck gen       --model register --processes 3 --ops 10 --seed 42 --consisten
 lincheck selfcheck --model register --seeds 100
 ```
 
-退出码：`0` 线性一致 / `1` 发现违规 / `2` 用法错误 / `3` 结论未知。
+退出码：`0` 线性一致 / `1` 发现违规 / `2` 用法错误 / `3` 结论未知 / `4` 输入数据错误。
+
+> **为什么 `1` 和 `4` 要分开**：`1` 的意思是「历史确实非线性一致」，这是一个
+> **有效结论**；`4` 的意思是「历史文件读不到或格式不对」，是**无法判断**。
+> 混用会让脚本把「数据有问题」误当成「发现 bug」。
+
+> **注意**：`visualize`、`minimize` 也会按检查结果返回退出码。对
+> `examples/register_bad.jsonl` 这类**故意构造的违规历史**，它们返回 `1` 是
+> 正确行为，不是程序出错——`1` 的意思就是「这份历史确实非线性一致」。
+> 只有 `check` 的退出码应该被当作判断依据；`visualize`/`minimize` 返回 `1`
+> 只是把它检查到的事实如实传递出来。
 
 ## 历史格式
 

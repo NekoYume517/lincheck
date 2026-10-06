@@ -26,9 +26,24 @@ const EXIT_USAGE : Int32 = 2
 const EXIT_UNKNOWN : Int32 = 3
 
 ///|
-/// CLI 内部失败
+/// 输入数据错误（文件读不到、JSONL 不合法）。
+/// 不复用 1 —— 1 专指「发现违规」，混用会让脚本无法区分
+/// 「历史确实违规」和「历史文件根本读不了」。
+const EXIT_DATA : Int32 = 4
+
+///|
+/// CLI 用法错误（参数缺失、拼错、未知取值）
 suberror Failure {
   Failure(String)
+}
+
+///|
+/// 输入数据错误（文件读不到、JSONL 不合法、记录格式错）
+///
+/// 与 `Failure` 分开，是为了让退出码能区分「你命令打错了」和
+/// 「你的数据有问题」——这两件事调用方的处理方式完全不同。
+suberror DataFailure {
+  DataFailure(String)
 }
 
 ///|
@@ -169,11 +184,11 @@ fn load_history(path : String) -> @lib.History raise {
     raise Failure("缺少 --history")
   }
   let text : String = @fs.read_file_to_string(path) catch {
-    _ => raise Failure("读不到文件：\{path}")
+    _ => raise DataFailure("读不到文件：\{path}")
   }
   match @lib.History::from_jsonl(text) {
     Ok(h) => h
-    Err(_) => raise Failure("JSONL 解析失败：\{path}")
+    Err(_) => raise DataFailure("JSONL 解析失败：\{path}")
   }
 }
 
@@ -217,6 +232,33 @@ fn json_violation(
 }
 
 ///|
+/// 解析 `--model`，未知名字返回可读的错误消息。
+///
+/// 不静默回退到默认模型：拼错一个字母就静默换模型，会给出一个看起来
+/// 权威但完全不对的结论。
+fn resolve_model(cli : Cli) -> Result[@lib.AnyModel, String] {
+  match @lib.model_by_name(cli.model) {
+    Some(m) => Ok(m)
+    None =>
+      Err(
+        "未知模型 \{cli.model}（可选 \{@lib.model_names().join(", ")})",
+      )
+  }
+}
+
+///|
+/// 解析模型，失败时打印到 stderr 并返回 None 供调用方提前退出。
+fn require_model(cli : Cli) -> @lib.AnyModel? {
+  match resolve_model(cli) {
+    Ok(m) => Some(m)
+    Err(msg) => {
+      eprintln("用法错误: \{msg}")
+      None
+    }
+  }
+}
+
+///|
 fn cmd_check(cli : Cli) -> Int32 raise {
   let cfg = @lib.CheckConfig::{
     time_budget_ms: cli.budget_ms,
@@ -224,7 +266,10 @@ fn cmd_check(cli : Cli) -> Int32 raise {
     allow_unknown_results: false,
   }
   let history = load_history(cli.history_path)
-  let model = @lib.model_by_name(cli.model)
+  let model = match require_model(cli) {
+    Some(m) => m
+    None => return EXIT_USAGE
+  }
   match @lib.check(history, model, cfg) {
     @lib.Linearizable => {
       if cli.json {
@@ -282,7 +327,10 @@ fn render_ops_indented(ops : Array[@lib.Operation]) -> String {
 ///|
 fn cmd_minimize(cli : Cli) -> Int32 raise {
   let history = load_history(cli.history_path)
-  let model = @lib.model_by_name(cli.model)
+  let model = match require_model(cli) {
+    Some(m) => m
+    None => return EXIT_USAGE
+  }
   let original_n = history.length()
   let v = @lib.minimize(history, model, @lib.CheckConfig::default())
   if v.ops.length() == 0 {
@@ -328,7 +376,10 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
 fn cmd_visualize(cli : Cli) -> Int32 raise {
   let history = load_history(cli.history_path)
   println(@lib.render_timeline(history))
-  let model = @lib.model_by_name(cli.model)
+  let model = match require_model(cli) {
+    Some(m) => m
+    None => return EXIT_USAGE
+  }
   match @lib.check(history, model, @lib.CheckConfig::default()) {
     @lib.Linearizable => EXIT_OK
     @lib.Violation(v) => {
@@ -354,7 +405,10 @@ fn cmd_gen(cli : Cli) -> Int32 {
     seed: cli.seed,
     concurrency: cli.concurrency,
   }
-  let model = @lib.model_by_name(cli.model)
+  let model = match require_model(cli) {
+    Some(m) => m
+    None => return EXIT_USAGE
+  }
   let history = match cli.mode {
     "random" => @lib.generate_random(model, cfg)
     "inject" =>
@@ -373,7 +427,10 @@ fn cmd_gen(cli : Cli) -> Int32 {
 
 ///|
 fn cmd_selfcheck(cli : Cli) -> Int32 {
-  let model = @lib.model_by_name(cli.model)
+  let model = match require_model(cli) {
+    Some(m) => m
+    None => return EXIT_USAGE
+  }
   let total = if cli.seeds < 1 { 1 } else { cli.seeds }
   let mut seed = 1
   let mut failed = 0
@@ -544,8 +601,12 @@ fn run(argv : Array[String]) -> Int32 {
         }
       } catch {
         Failure(msg) => {
-          println("错误：\{msg}")
+          println("用法错误：\{msg}")
           EXIT_USAGE
+        }
+        DataFailure(msg) => {
+          println("数据错误：\{msg}")
+          EXIT_DATA
         }
         _ => {
           println("内部错误")
