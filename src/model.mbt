@@ -517,13 +517,33 @@ pub impl Model for AnyModel with fn state_hash(self, state) {
 }
 
 ///|
-/// 按名字选模型；未知名字回落到 register（与 CLI 的默认值一致）。
-pub fn model_by_name(name : String) -> AnyModel {
+/// 按名字选模型。
+///
+/// 未知名字**不回退**，返回 `None`。静默回退到一个默认模型是危险的：
+/// 用户敲 `--model reqister` 拼错一个字母，工具会拿 register 模型跑完，
+/// 然后给出一个看起来权威但完全不是他要的结论。
+///
+/// 需要默认值的调用方应显式写 `model_by_name(name).unwrap_or(register_model())`，
+/// 让「用了默认值」这件事在代码里可见。
+pub fn model_by_name(name : String) -> AnyModel? {
   match name {
-    "counter" => Counter(counter_model())
-    "set" => Set(set_model())
-    "queue" => Queue(queue_model())
-    _ => Register(register_model())
+    "register" => Some(Register(register_model()))
+    "counter" => Some(Counter(counter_model()))
+    "set" => Some(Set(set_model()))
+    "queue" => Some(Queue(queue_model()))
+    _ => None
+  }
+}
+
+///|
+/// `model_by_name` 的便利版本：未知名字回退到 `register`。
+///
+/// 仅供**已知名字合法**的场景（测试、内建示例）。CLI 必须用 `model_by_name`
+/// 并对 `None` 报用法错误，否则拼错模型名会静默跑错模型。
+pub fn model_or_default(name : String) -> AnyModel {
+  match model_by_name(name) {
+    Some(m) => m
+    None => Register(register_model())
   }
 }
 

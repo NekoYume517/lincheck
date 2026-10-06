@@ -132,7 +132,7 @@ const CK_CONCURRENT_OK : String =
 test "example_register_ok_is_linearizable" {
   let h = parse_or_empty(CK_REGISTER_OK)
   inspect(h.length(), content="3")
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   inspect(outcome_str(outcome), content="Linearizable")
 }
 
@@ -148,7 +148,7 @@ test "example_register_ok_is_linearizable" {
 test "example_register_bad_is_violation" {
   let h = parse_or_empty(CK_REGISTER_BAD)
   inspect(h.length(), content="3")
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   inspect(outcome_str(outcome), content="Violation")
   // 三个操作都必须提及（两次写 + 那个读）
   inspect(violation_ids(outcome), content="0,1,2")
@@ -157,7 +157,7 @@ test "example_register_bad_is_violation" {
 ///|
 test "example_register_bad_explanation_names_the_read" {
   let h = parse_or_empty(CK_REGISTER_BAD)
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   let text = violation_text(outcome)
   // 解释里必须指出模型期望 2、历史记录 1
   assert_true(text.contains("-> 2"))
@@ -174,7 +174,7 @@ test "example_register_bad_with_two_writes_alone_is_fine" {
     cop(1, 1, Write(2), OpResult::Ok, 12L, 20L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Linearizable",
   )
 }
@@ -190,14 +190,14 @@ test "example_register_bad_with_two_writes_alone_is_fine" {
 test "example_stale_read_is_violation" {
   let h = parse_or_empty(CK_STALE_READ)
   inspect(h.length(), content="3")
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   inspect(outcome_str(outcome), content="Violation")
 }
 
 ///|
 test "example_stale_read_explanation_reports_expected_one" {
   let h = parse_or_empty(CK_STALE_READ)
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   let text = violation_text(outcome)
   // 模型在写完 1 之后期望读 1，但历史记录读 0
   assert_true(text.contains("-> 1"))
@@ -216,7 +216,7 @@ test "example_stale_read_explanation_reports_expected_one" {
 test "example_concurrent_ok_is_linearizable" {
   let h = parse_or_empty(CK_CONCURRENT_OK)
   inspect(h.length(), content="4")
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   inspect(outcome_str(outcome), content="Linearizable")
 }
 
@@ -231,7 +231,7 @@ test "example_concurrent_ok_becomes_violation_if_first_read_is_two" {
     cop(2, 2, Write(2), OpResult::Ok, 12L, 18L),
     cop(3, 3, Read, Value(1), 20L, 35L),
   ])
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   inspect(outcome_str(outcome), content="Violation")
 }
 
@@ -242,7 +242,7 @@ test "example_concurrent_ok_becomes_violation_if_first_read_is_two" {
 ///|
 test "empty_history_is_linearizable" {
   inspect(
-    outcome_str(check_default(History::new(), model_by_name("register"))),
+    outcome_str(check_default(History::new(), model_or_default("register"))),
     content="Linearizable",
   )
 }
@@ -251,7 +251,7 @@ test "empty_history_is_linearizable" {
 test "single_write_is_linearizable" {
   let h = chist([cop(0, 0, Write(5), OpResult::Ok, 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Linearizable",
   )
 }
@@ -260,7 +260,7 @@ test "single_write_is_linearizable" {
 test "single_read_of_initial_value_is_linearizable" {
   let h = chist([cop(0, 0, Read, Value(0), 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Linearizable",
   )
 }
@@ -269,7 +269,7 @@ test "single_read_of_initial_value_is_linearizable" {
 test "single_read_of_wrong_initial_value_is_violation" {
   // 初始状态是 0，读到 9 无从解释
   let h = chist([cop(0, 0, Read, Value(9), 0L, 10L)])
-  let outcome = check_default(h, model_by_name("register"))
+  let outcome = check_default(h, model_or_default("register"))
   inspect(outcome_str(outcome), content="Violation")
   inspect(violation_depth(outcome), content="0")
 }
@@ -279,7 +279,7 @@ test "write_returning_value_instead_of_ok_is_violation" {
   // 写必须返回 Ok
   let h = chist([cop(0, 0, Write(5), Value(5), 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Violation",
   )
 }
@@ -291,7 +291,7 @@ test "cas_success_then_read_sees_new_value" {
     cop(1, 1, Read, Value(7), 20L, 30L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Linearizable",
   )
 }
@@ -304,7 +304,7 @@ test "cas_failure_keeps_state" {
     cop(1, 1, Read, Value(0), 20L, 30L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Linearizable",
   )
 }
@@ -313,7 +313,7 @@ test "cas_failure_keeps_state" {
 test "cas_success_but_reported_false_is_violation" {
   let h = chist([cop(0, 0, Cas(0, 7), OpResult::Bool(false), 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Violation",
   )
 }
@@ -322,7 +322,7 @@ test "cas_success_but_reported_false_is_violation" {
 test "invalid_interval_reports_unknown" {
   // start > end 是无效输入；返回 Unknown 而不是错误结论
   let h = chist([cop(0, 0, Write(1), OpResult::Ok, 20L, 10L)])
-  match check_default(h, model_by_name("register")) {
+  match check_default(h, model_or_default("register")) {
     Unknown(reason) => inspect(reason.contains("区间非法"), content="true")
     _ => inspect("<应当 Unknown>", content="")
   }
@@ -346,12 +346,12 @@ fn backtracking_history() -> History {
 ///|
 test "cache_on_and_off_agree_on_linearizable" {
   let h = backtracking_history()
-  let with_cache = check(h, model_by_name("register"), CheckConfig::{
+  let with_cache = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 5000,
     max_states: 200_000,
     allow_unknown_results: false,
   })
-  let no_cache = check(h, model_by_name("register"), CheckConfig::{
+  let no_cache = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 5000,
     max_states: 0,
     allow_unknown_results: false,
@@ -369,12 +369,12 @@ test "cache_on_and_off_agree_on_violation" {
     cop(2, 2, Write(3), OpResult::Ok, 22L, 30L),
     cop(3, 0, Read, Value(1), 40L, 50L),
   ])
-  let with_cache = check(h, model_by_name("register"), CheckConfig::{
+  let with_cache = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 5000,
     max_states: 200_000,
     allow_unknown_results: false,
   })
-  let no_cache = check(h, model_by_name("register"), CheckConfig::{
+  let no_cache = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 5000,
     max_states: 0,
     allow_unknown_results: false,
@@ -447,8 +447,8 @@ test "cache_hits_are_positive_when_states_converge" {
 ///|
 test "check_is_deterministic" {
   let h = parse_or_empty(CK_REGISTER_BAD)
-  let a = check_default(h, model_by_name("register"))
-  let b = check_default(h, model_by_name("register"))
+  let a = check_default(h, model_or_default("register"))
+  let b = check_default(h, model_or_default("register"))
   inspect(violation_text(a), content=violation_text(b))
   let da = violation_depth(a)
   let db = violation_depth(b)
@@ -473,7 +473,7 @@ test "timeout_returns_unknown_not_hang" {
   }
   ops.push(cop(10, 0, Read, Value(999), 101L, 110L))
   let h = chist(ops)
-  let outcome = check(h, model_by_name("register"), CheckConfig::{
+  let outcome = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 1,
     max_states: 5,
     allow_unknown_results: false,
@@ -489,7 +489,7 @@ test "timeout_returns_unknown_not_hang" {
 test "zero_budget_means_unlimited_and_still_terminates" {
   // time_budget_ms <= 0 表示不设上限；这个问题规模小，必须正常返回结论
   let h = parse_or_empty(CK_REGISTER_OK)
-  let outcome = check(h, model_by_name("register"), CheckConfig::{
+  let outcome = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 0,
     max_states: 200_000,
     allow_unknown_results: false,
@@ -506,7 +506,7 @@ test "nil_result_is_violation_in_strict_mode" {
   // 读操作的结果记为 Nil（未知），严格模式下与 Value(0) 不匹配
   let h = chist([cop(0, 0, Read, Nil, 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("register"))),
+    outcome_str(check_default(h, model_or_default("register"))),
     content="Violation",
   )
 }
@@ -514,7 +514,7 @@ test "nil_result_is_violation_in_strict_mode" {
 ///|
 test "nil_result_is_accepted_in_permissive_mode" {
   let h = chist([cop(0, 0, Read, Nil, 0L, 10L)])
-  let outcome = check(h, model_by_name("register"), CheckConfig::{
+  let outcome = check(h, model_or_default("register"), CheckConfig::{
     time_budget_ms: 5000,
     max_states: 200_000,
     allow_unknown_results: true,
@@ -535,7 +535,7 @@ test "counter_monotonic_history_is_linearizable" {
     cop(2, 0, Read, Value(2), 22L, 30L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("counter"))),
+    outcome_str(check_default(h, model_or_default("counter"))),
     content="Linearizable",
   )
 }
@@ -548,7 +548,7 @@ test "counter_rollback_is_violation" {
     cop(1, 1, Write(1), OpResult::Ok, 12L, 20L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("counter"))),
+    outcome_str(check_default(h, model_or_default("counter"))),
     content="Violation",
   )
 }
@@ -561,7 +561,7 @@ test "set_append_then_pop_is_linearizable" {
     cop(2, 2, Pop, OpResult::Bool(false), 22L, 30L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("set"))),
+    outcome_str(check_default(h, model_or_default("set"))),
     content="Linearizable",
   )
 }
@@ -570,7 +570,7 @@ test "set_append_then_pop_is_linearizable" {
 test "set_pop_from_empty_then_reported_true_is_violation" {
   let h = chist([cop(0, 0, Pop, OpResult::Bool(true), 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("set"))),
+    outcome_str(check_default(h, model_or_default("set"))),
     content="Violation",
   )
 }
@@ -584,7 +584,7 @@ test "queue_fifo_history_is_linearizable" {
     cop(3, 0, Pop, Value(2), 32L, 42L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("queue"))),
+    outcome_str(check_default(h, model_or_default("queue"))),
     content="Linearizable",
   )
 }
@@ -598,7 +598,7 @@ test "queue_lifo_history_is_violation" {
     cop(2, 0, Pop, Value(2), 30L, 40L),
   ])
   inspect(
-    outcome_str(check_default(h, model_by_name("queue"))),
+    outcome_str(check_default(h, model_or_default("queue"))),
     content="Violation",
   )
 }
@@ -607,7 +607,7 @@ test "queue_lifo_history_is_violation" {
 test "queue_pop_empty_reported_value_is_violation" {
   let h = chist([cop(0, 0, Pop, Value(1), 0L, 10L)])
   inspect(
-    outcome_str(check_default(h, model_by_name("queue"))),
+    outcome_str(check_default(h, model_or_default("queue"))),
     content="Violation",
   )
 }
@@ -619,7 +619,7 @@ test "queue_pop_empty_reported_value_is_violation" {
 ///|
 test "check_and_check_any_agree" {
   let h = parse_or_empty(CK_REGISTER_BAD)
-  let m = model_by_name("register")
+  let m = model_or_default("register")
   let cfg = CheckConfig::default()
   inspect(
     outcome_str(check(h, m, cfg)),
@@ -630,7 +630,7 @@ test "check_and_check_any_agree" {
 ///|
 test "check_default_equals_check_with_default_config" {
   let h = parse_or_empty(CK_REGISTER_OK)
-  let m = model_by_name("register")
+  let m = model_or_default("register")
   inspect(
     outcome_str(check_default(h, m)),
     content=outcome_str(check(h, m, CheckConfig::default())),
@@ -672,7 +672,7 @@ test "register_bad_explored_node_count_is_small" {
 ///|
 test "violation_ops_are_sorted_by_id" {
   let h = parse_or_empty(CK_REGISTER_BAD)
-  match check_default(h, model_by_name("register")) {
+  match check_default(h, model_or_default("register")) {
     Violation(v) => {
       let mut prev = -1
       for op in v.ops {
@@ -687,7 +687,7 @@ test "violation_ops_are_sorted_by_id" {
 ///|
 test "violation_depth_is_within_bounds" {
   let h = parse_or_empty(CK_REGISTER_BAD)
-  match check_default(h, model_by_name("register")) {
+  match check_default(h, model_or_default("register")) {
     Violation(v) => {
       assert_true(v.depth >= 0)
       assert_true(v.depth <= h.length())
@@ -699,7 +699,7 @@ test "violation_depth_is_within_bounds" {
 ///|
 test "violation_explanation_is_nonempty_and_mentions_model" {
   let h = parse_or_empty(CK_STALE_READ)
-  let text = violation_text(check_default(h, model_by_name("register")))
+  let text = violation_text(check_default(h, model_or_default("register")))
   assert_true(text.length() > 0)
   assert_true(text.contains("register"))
   assert_true(text.contains("非线性一致"))
@@ -709,7 +709,7 @@ test "violation_explanation_is_nonempty_and_mentions_model" {
 test "violation_always_reports_at_least_one_op" {
   // 即使第一步就走不通，也必须给出操作证据
   let h = chist([cop(0, 0, Read, Value(42), 0L, 10L)])
-  match check_default(h, model_by_name("register")) {
+  match check_default(h, model_or_default("register")) {
     Violation(v) => assert_true(v.ops.length() >= 1)
     _ => inspect("<应当 Violation>", content="")
   }
@@ -789,7 +789,7 @@ fn linearizable_bruteforce(ops : Array[Operation]) -> Bool {
 test "cross_verify_four_examples_against_bruteforce" {
   for text in [CK_REGISTER_OK, CK_REGISTER_BAD, CK_STALE_READ, CK_CONCURRENT_OK] {
     let h = parse_or_empty(text)
-    let wgl = match check_default(h, model_by_name("register")) {
+    let wgl = match check_default(h, model_or_default("register")) {
       Linearizable => true
       Violation(_) => false
       Unknown(_) => true
@@ -854,7 +854,7 @@ test "cross_verify_synthetic_cases_against_bruteforce" {
   let mut n = 0
   for ops in cases {
     let h = chist(ops)
-    let wgl = match check_default(h, model_by_name("register")) {
+    let wgl = match check_default(h, model_or_default("register")) {
       Linearizable => true
       Violation(_) => false
       Unknown(_) => true

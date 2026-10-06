@@ -247,25 +247,25 @@ test "queue_read_returns_front" {
 
 ///|
 test "anymodel_dispatch_by_name" {
-  inspect(model_by_name("register").name(), content="register")
-  inspect(model_by_name("counter").name(), content="counter")
-  inspect(model_by_name("set").name(), content="set")
-  inspect(model_by_name("queue").name(), content="queue")
+  inspect(model_or_default("register").name(), content="register")
+  inspect(model_or_default("counter").name(), content="counter")
+  inspect(model_or_default("set").name(), content="set")
+  inspect(model_or_default("queue").name(), content="queue")
   // 未知名字回落到 register
-  inspect(model_by_name("nonsense").name(), content="register")
+  inspect(model_or_default("nonsense").name(), content="register")
 }
 
 ///|
 test "anymodel_forwards_apply" {
-  let reg = model_by_name("register")
+  let reg = model_or_default("register")
   inspect(apply_str(reg, [0], Write(4)), content="[4] => Ok")
-  let q = model_by_name("queue")
+  let q = model_or_default("queue")
   inspect(apply_str(q, [0], Append(4)), content="[1,4] => Ok")
 }
 
 ///|
 test "anymodel_forwards_hash_and_eq" {
-  let m = model_by_name("set")
+  let m = model_or_default("set")
   assert_true(m.state_hash([1, 2]) == poly_hash([1, 2]))
   assert_true(m.state_eq([1, 2], [1, 2]))
   assert_true(!m.state_eq([1, 2], [2, 1]))
