@@ -1,10 +1,10 @@
-name = "moonbit-hack/lincheck"
+name = "NekoYume517/lincheck"
 
 version = "0.1.0"
 
 readme = "README.md"
 
-repository = "https://github.com/moonbit-hack/lincheck"
+repository = "https://github.com/NekoYume517/lincheck"
 
 license = "Apache-2.0"
 
@@ -23,3 +23,6 @@ description = "Linearizability checker: Wing-Gong-Lowe search over concurrent hi
 import {
   "moonbitlang/x@0.5.5",
 }
+
+
+
