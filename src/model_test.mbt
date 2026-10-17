@@ -128,12 +128,33 @@ test "counter_allows_strict_increase" {
 }
 
 ///|
-test "counter_rejects_equal_or_decreasing" {
+test "counter_accepts_equal_writes_rejects_decreasing" {
+  // 语义：Write 是 set 语义——写入相同值在物理上可能（幂等写），
+  // 因此只拒绝「回退」。模型必须只排除物理上不可能的转换；
+  // 拒绝 v == current 会把合法历史误报为违规。
   let m = counter_model()
-  // 不允许回退
-  inspect(apply_str(m, [5], Write(4)), content="illegal")
-  // 也不允许原地不动（严格递增）
-  inspect(apply_str(m, [5], Write(5)), content="illegal")
+  // 回退：非法
+  match m.apply([5], Write(3)) {
+    Some(_) => inspect("legal", content="illegal")
+    None => inspect("illegal", content="illegal")
+  }
+  // 原地踏步：合法（幂等写）
+  match m.apply([5], Write(5)) {
+    Some((st, res)) => {
+      inspect(st[0], content="5")
+      let ok = match res {
+        Ok => true
+        _ => false
+      }
+      inspect(ok, content="true")
+    }
+    None => inspect("legal", content="illegal")
+  }
+  // 递增：合法
+  match m.apply([5], Write(7)) {
+    Some((st, _)) => inspect(st[0], content="7")
+    None => inspect("legal", content="illegal")
+  }
 }
 
 ///|

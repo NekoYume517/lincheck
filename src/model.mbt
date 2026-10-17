@@ -192,7 +192,12 @@ pub impl Model for CounterModel with fn apply(self, state, kind) {
   let current = state[0]
   match kind {
     Write(v) =>
-      if v > current {
+      // 单调计数器：只拒绝「回退」（v < current）。
+      // 写入相同值（原地踏步）在物理上是可能的——写入操作存在但没有
+      // 改变状态，例如幂等写。线性一致性检查器的模型应尽量宽松，只
+      // 排除物理上不可能的转换；把 v == current 也拒绝会让检查器对
+      // 「合法但无聊」的历史误报违规。
+      if v >= current {
         Some(([v], Ok))
       } else {
         None // 计数器不允许回退
