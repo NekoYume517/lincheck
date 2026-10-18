@@ -302,17 +302,15 @@ pub fn[M : Model] shrink(
   let big_enough = result.length() >= min_witness
   if big_enough && still_violates(result, model, config) {
     result
-  } else {
     // 原始历史本身就小于下界（例如只有一条不可解释的读），不做裁剪。
     // 但**兜底前必须确认种子本身仍违规**（L2 加固）：ddmin 的输入来自
     // check 的反例，若上游证据链有缺陷（如 ops 里不含肇事操作），seed
     // 可能线性一致 —— 此时静默返回它会产生一个 check 都否定的「见证」。
     // 宁可 panic 也不输出自相矛盾的结果。
-    if still_violates(seed, model, config) {
-      seed.copy()
-    } else {
-      abort("minimize: seed history is linearizable; witness chain is broken")
-    }
+  } else if still_violates(seed, model, config) {
+    seed.copy()
+  } else {
+    abort("minimize: seed history is linearizable; witness chain is broken")
   }
 }
 

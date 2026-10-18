@@ -386,7 +386,9 @@ fn[M : Model] dfs(
   // ---- 5. 全部候选失败：记录进度，写入缓存 ----
   // 值不匹配优先（解释更具体）；没有值失败但有模型拒绝时用后者。
   if first_value_fail >= 0 {
-    record_progress(ctx, depth, path, state, first_value_fail, first_value_fail_expected)
+    record_progress(
+      ctx, depth, path, state, first_value_fail, first_value_fail_expected,
+    )
   } else {
     record_progress(ctx, depth, path, state, first_illegal, Nil)
   }
