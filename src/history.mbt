@@ -57,7 +57,7 @@ pub(all) struct Operation {
   result : OpResult
   start : Int64 // 逻辑时间戳（调用发生）
   end : Int64 // 逻辑时间戳（响应发生）
-} derive(Debug)
+} derive(Eq, Debug)
 
 ///|
 /// 一段待检查的历史：若干操作的集合。
@@ -251,18 +251,43 @@ pub(all) suberror HistoryError {
 
 ///|
 /// 从 JSON 对象里取一个整数，缺失或类型不符返回 None。
+///
+/// 数值必须是「数学上的整数」且落在 Int32 范围内，否则同样返回 None：
+/// - `1.5` 这类小数曾直接被 `to_int()` 截成 1；
+/// - 超范围的字面量曾被静默回绕（`4294967297` → 1）。
+/// 两种情形都让该行变 BadLine——契约要求非法行报错，不做有损转换。
 fn json_int(m : Map[String, Json], key : String) -> Int32? {
   match m.get(key) {
-    Some(Number(v, ..)) => Some(v.to_int())
+    Some(Number(v, ..)) => {
+      if v != v.trunc() {
+        return None
+      }
+      let i = v.to_int64()
+      if i < -2147483648L || i > 2147483647L {
+        return None
+      }
+      Some(i.to_int())
+    }
     _ => None
   }
 }
 
 ///|
 /// 从 JSON 对象里取一个 64 位整数（时间戳用）。
+///
+/// 非「数学上的整数」直接拒绝；Double 只有 53 位有效整数，达到 ±2^63
+/// 边界外的字面量本身已损失精度，也拒绝——绝不静默回绕。
 fn json_int64(m : Map[String, Json], key : String) -> Int64? {
   match m.get(key) {
-    Some(Number(v, ..)) => Some(v.to_int64())
+    Some(Number(v, ..)) => {
+      if v != v.trunc() {
+        return None
+      }
+      if v < -9223372036854775808.0 || v >= 9223372036854775808.0 {
+        return None
+      }
+      Some(v.to_int64())
+    }
     _ => None
   }
 }
