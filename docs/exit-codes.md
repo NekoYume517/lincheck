@@ -9,7 +9,12 @@ produces a misleading report.
 | 1 | Violation found | yes |
 | 2 | Usage error | no — the command was wrong |
 | 3 | Unknown (search budget exhausted) | no |
-| 4 | Input data error | no — there was nothing to judge |
+| 4 | Input data error (unreadable/unparseable file) | no — there was nothing to judge |
+
+Note: a history that *parses* but contains an invalid interval
+(`start > end`) surfaces as `3` (Unknown), not `4` — the file was readable,
+so `check` ran and reported "cannot judge" rather than "could not read".
+`4` is reserved for failures before any history exists to examine.
 
 ## The distinction that matters
 

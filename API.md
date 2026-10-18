@@ -7,19 +7,19 @@
 ## 1. 历史模型 `src/history.mbt`
 
 ```moonbit
-pub type OpId = Int
+pub type OpId = Int32
 
 pub(all) enum OpKind {
-  Write(Int)        // 写入值
+  Write(Int32)      // 写入值
   Read              // 读取
-  Cas(expected : Int, new : Int)
-  Append(Int)       // 队列/日志追加
+  Cas(expected : Int32, new : Int32)
+  Append(Int32)     // 队列/日志追加
   Pop               // 队列弹出
 } derive(Eq, Debug)
 
 pub(all) enum OpResult {
   Ok                       // 写成功
-  Value(Int)               // 读到的值
+  Value(Int32)             // 读到的值
   Bool(Bool)               // CAS 成功与否
   Empty                    // Pop 时队列为空
   Nil                      // 超时/未知
@@ -27,7 +27,7 @@ pub(all) enum OpResult {
 
 pub(all) struct Operation {
   id : OpId
-  process : Int
+  process : Int32
   kind : OpKind
   result : OpResult
   start : Int64        // 逻辑时间戳（调用发生）
@@ -40,7 +40,7 @@ pub(all) struct History {
 
 pub fn History::new() -> History
 pub fn History::add(self : History, op : Operation) -> Unit
-pub fn History::length(self : History) -> Int
+pub fn History::length(self : History) -> Int32
 pub fn History::sort_by_start(self : History) -> History
 
 /// A 在 B 之前完成（且不重叠）
@@ -54,7 +54,7 @@ pub fn History::to_jsonl(self : History) -> String
 pub fn History::from_jsonl(text : StringView) -> Result[History, HistoryError] raise
 
 pub(all) suberror HistoryError {
-  BadLine(line_no : Int, reason : String)
+  BadLine(line_no : Int32, reason : String)
 } derive(Eq, Debug)
 ```
 
@@ -113,18 +113,23 @@ pub(all) enum CheckOutcome {
 } derive(Debug)
 
 pub(all) struct Violation {
-  /// 最小反例的操作子集（按 id 升序）
+  /// 反例的操作子集（按 id 升序）：最长一致前缀 + 被卡住的操作。
+  /// 被卡住的操作可能是「返回值不匹配」也可能是「模型拒绝执行」
+  /// （例如单调计数器的回退）——两种都进证据，check(ops) 必然再次
+  /// 报告违规。
   ops : Array<Operation>
   /// 搜索过程中最后一致的前缀长度
-  depth : Int
+  depth : Int32
   /// 人类可读的解释
   explanation : String
 }
 
 pub(all) struct CheckConfig {
-  time_budget_ms : Int       // 默认 5000
-  max_states : Int           // 缓存上限，默认 200_000
-  /// 是否把 Nil 结果视为"可以返回任意值"（宽松模式）
+  time_budget_ms : Int32       // 默认 5000
+  max_states : Int32           // 缓存上限，默认 200_000
+  /// 是否把历史记录中的 Nil 结果视为"可以返回任意值"（宽松模式）。
+  /// 另有一层独立语义：**模型**返回的 Nil 期望是通配（任何实际结果
+  /// 都匹配），与本开关无关——那是模型作者声明非确定返回的手段。
   allow_unknown_results : Bool
 }
 
@@ -178,7 +183,7 @@ pub fn minimize_by_process(history : History, model : Model) -> Violation
 ```moonbit
 pub(all) struct GenConfig {
   processes : Int
-  ops_per_process : Int
+  ops_per_process : Int32
   seed : Int
   /// 并发度：0 = 全串行，1 = 完全随机并发
   concurrency : Double
