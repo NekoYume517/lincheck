@@ -391,19 +391,23 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
 ///|
 fn cmd_visualize(cli : Cli) -> Int32 raise {
   let history = load_history(cli.history_path)
-  println(@lib.render_timeline(history))
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
   }
   match @lib.check(history, model, @lib.CheckConfig::default()) {
-    @lib.Linearizable => EXIT_OK
+    @lib.Linearizable => {
+      println(@lib.render_timeline(history))
+      EXIT_OK
+    }
     @lib.Violation(v) => {
-      println("")
+      // render_violation 内部会画见证子集的时间轴；若这里再画一遍
+      // 全量时间轴，同一条历史会出现两次几乎相同的图。只保留前者。
       println(@lib.render_violation(v, history))
       EXIT_VIOLATION
     }
     @lib.Unknown(reason) => {
+      println(@lib.render_timeline(history))
       println("")
       println("? 结论未知：\{reason}")
       EXIT_UNKNOWN
