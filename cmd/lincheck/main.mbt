@@ -172,7 +172,7 @@ fn usage() -> Unit {
   println("模型：\{names.to_string()}")
   println("")
   println(
-    "退出码：0 线性一致 / 1 发现违规 / 2 用法错误 / 3 结论未知",
+    "退出码：0 线性一致 / 1 发现违规 / 2 用法错误 / 3 结论未知 / 4 输入数据错误",
   )
 }
 
@@ -332,7 +332,14 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     None => return EXIT_USAGE
   }
   let original_n = history.length()
-  let v = @lib.minimize(history, model, @lib.CheckConfig::default())
+  // --budget-ms 之前被硬编码的 default() 吞掉：用户给 10ms 就是想让大历史
+  // 快速返回，结果工具默默按 5s 跑 —— 显式参数必须生效。
+  let cfg : @lib.CheckConfig = {
+    time_budget_ms: cli.budget_ms,
+    max_states: 200_000,
+    allow_unknown_results: false,
+  }
+  let v = @lib.minimize(history, model, cfg)
   if v.ops.length() == 0 {
     if cli.json {
       println("{\"verdict\":\"linearizable\",\"total\":\{original_n}}")
@@ -349,7 +356,16 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
       _ => false
     }
     if cli.json {
-      println(json_violation(v, history, "non-linearizable"))
+      // 退出码与 JSON 结论必须一致：confirmed=false 意味着连 check 都
+      // 无法复现这个「见证」，此时宣称 non-linearizable 是把脚本当猴耍
+      // —— 它会把这个历史记成一个已证实的 bug。未知就写 unknown。
+      let verdict = if confirmed { "non-linearizable" } else { "unknown" }
+      println(json_violation(v, history, verdict))
+      if !confirmed {
+        println(
+          "{\"note\":\"witness could not be re-confirmed by check\",\"reason\":\"witness chain broken\"}",
+        )
+      }
     } else {
       println("✗ NON-LINEARIZABLE")
       println("")

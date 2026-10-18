@@ -175,14 +175,16 @@ test "set_init_is_empty" {
 }
 
 ///|
-test "set_append_and_read_min" {
+test "set_read_is_nondeterministic" {
   let m = set_model()
   // 加入 5：低半掩码第 5 位置位 = 32
   inspect(apply_str(m, [0, 0], Append(5)), content="[32,0] => Ok")
-  // 空集 Read 返回 -1
-  inspect(apply_str(m, [0, 0], Read), content="[0,0] => -> -1")
-  // 有元素时返回最小元素
-  inspect(apply_str(m, [32, 0], Read), content="[32,0] => -> 5")
+  // 集合读是非确定的：任何已包含的成员都是合法答案，因此模型返回
+  // Nil 通配期望。旧实现钉死最小成员，会把「Append(1)+Append(2) 并发
+  // 后 Read->2」这类完全合法的历史误判为违规。
+  inspect(apply_str(m, [32, 0], Read), content="[32,0] => -> Nil")
+  // 空集上的读同样通配 —— 读一个空集返回什么由被测系统定义
+  inspect(apply_str(m, [0, 0], Read), content="[0,0] => -> Nil")
 }
 
 ///|

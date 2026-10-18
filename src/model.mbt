@@ -338,7 +338,13 @@ pub impl Model for SetModel with fn apply(self, state, kind) {
         Some((set_remove(state, smallest), OpResult::Bool(true)))
       }
     }
-    Read => Some((state_copy(state), Value(set_min(state))))
+    Read =>
+      // 集合读是**非确定的**：并发插入后，任何已包含的成员都是合法答案。
+      // 返回 Nil（通配期望）而不是钉死最小成员 —— 旧实现会把
+      // Append(1)+Append(2) 并发后的 Read->2 判成违规，而它是完全合法的
+      // （两个 append 都在 Read 开始前完成，集合包含 1 和 2）。
+      // 这正是「模型只排除物理不可能转换」原则的直接应用。
+      Some((state_copy(state), Nil))
     Cas(_, _) => None
   }
 }

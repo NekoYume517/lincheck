@@ -142,6 +142,14 @@ fn result_matches(
   actual : OpResult,
   allow_unknown : Bool,
 ) -> Bool {
+  // **模型期望 Nil = 通配**（模型作者主动声明"这个操作的返回值是非确定的"，
+  // 例如集合上并发插入后的读——任何成员都是合法答案）。
+  // 注意方向：Nil 在 expected 位置是通配；在 actual 位置只有
+  // allow_unknown（宽松模式）才通配 —— 历史记录里的 Nil 是"结果未知"，
+  // 不是"任意值都行"，严格模式下它与任何期望都不匹配。
+  if expected is Nil {
+    return true
+  }
   if allow_unknown {
     match (expected, actual) {
       (_, Nil) => true
@@ -313,10 +321,20 @@ fn[M : Model] dfs(
 
   // ---- 4. 按确定顺序逐个尝试 ----
   //
-  // `first_fail` / `first_fail_expected` 记录"本层第一个能执行但返回值不匹配"
-  // 的候选，用于生成解释；模型判非法（None）的候选不产生解释信息。
-  let mut first_fail = -1
-  let mut first_fail_expected = Nil
+  // 失败分两类，都要进反例证据（L1）：
+  //   - `first_value_fail`：模型能执行但返回值与历史不符
+  //   - `first_illegal`：模型在此状态下拒绝执行（返回 None）
+  //
+  // 旧版只记录第一类 —— 对 counter 这类「某些转换物理不可能」的模型，
+  // 真正的肇因往往是第二类：历史里 W=3[12,20] 被实时序钉死在 W=5[0,10]
+  // 之后，而 counter 拒绝 3 <= 5 的回退。证据里只有合法的 W=5，肇事的
+  // W=3 完全不见，`check(violation.ops) == Linearizable` —— 反例链条断了。
+  //
+  // 两类都记时优先保留更深层的记录；同层里 first_value_fail 的解释信息
+  // 更丰富（有期望值可对照），所以 value_fail 优先展示。
+  let mut first_value_fail = -1
+  let mut first_value_fail_expected = Nil
+  let mut first_illegal = -1
   let mut found = false
   let mut i = 0
   while i < candidates.length() && !found {
@@ -347,11 +365,15 @@ fn[M : Model] dfs(
             found = true
           }
           // 状态可执行，但模型期望的返回值与历史不符 → 该候选被剪枝
-        } else if first_fail < 0 {
-          first_fail = idx
-          first_fail_expected = expected
+        } else if first_value_fail < 0 {
+          first_value_fail = idx
+          first_value_fail_expected = expected
         }
-      None => () // 模型说此状态下该操作非法 → 剪枝
+      None =>
+        // 模型说此状态下该操作物理不可能 → 剪枝，但要留下证据
+        if first_illegal < 0 {
+          first_illegal = idx
+        }
     }
     i = i + 1
   }
@@ -362,7 +384,12 @@ fn[M : Model] dfs(
   }
 
   // ---- 5. 全部候选失败：记录进度，写入缓存 ----
-  record_progress(ctx, depth, path, state, first_fail, first_fail_expected)
+  // 值不匹配优先（解释更具体）；没有值失败但有模型拒绝时用后者。
+  if first_value_fail >= 0 {
+    record_progress(ctx, depth, path, state, first_value_fail, first_value_fail_expected)
+  } else {
+    record_progress(ctx, depth, path, state, first_illegal, Nil)
+  }
   if !ctx.cache_full {
     if ctx.cache.length() < config.max_states {
       ctx.cache[key] = true
@@ -424,11 +451,20 @@ fn build_explanation(
     let bad = ops[fail_idx]
     sb.write_string("\n无法解释的操作：\n  ")
     sb.write_string(format_op(bad))
-    sb.write_string("\n  模型在该状态下期望 ")
-    sb.write_string(format_op_result(fail_expected))
-    sb.write_string("，而历史记录为 ")
-    sb.write_string(format_op_result(bad.result))
-    sb.write_string("。\n")
+    sb.write_string("\n")
+    if fail_expected is Nil {
+      // fail_expected == Nil：模型在此状态下拒绝执行该操作（返回 None）
+      // —— 转换物理不可能，而不是返回值不匹配。
+      sb.write_string(
+        "  模型在该状态下拒绝执行此操作：该转换在语义上不可能（例如单调计数器的回退、对空队列的出队）。\n",
+      )
+    } else {
+      sb.write_string("  模型在该状态下期望 ")
+      sb.write_string(format_op_result(fail_expected))
+      sb.write_string("，而历史记录为 ")
+      sb.write_string(format_op_result(bad.result))
+      sb.write_string("。\n")
+    }
 
     let before : Array[Operation] = []
     for op in ops {
@@ -529,10 +565,16 @@ fn build_violation(
   }
   ids.sort_by(fn(a, b) { a - b })
 
+  // 按 **id 升序** 组装（API.md 承诺 witness 按 id 升序）。旧实现按文件
+  // 行序遍历 ops，行序被打乱的历史会输出 2,0,1 这样的乱序见证，而
+  // minimize 走 sort_ops_by_id 是升序 —— 两条路径输出不一致。
   let subset : Array[Operation] = []
-  for op in ops {
-    if ids.contains(op.id) {
-      subset.push(op)
+  for want in ids {
+    for op in ops {
+      if op.id == want {
+        subset.push(op)
+        break
+      }
     }
   }
   // 兜底：连一步都没走通（例如第一个操作就不合法）时报告全部操作，

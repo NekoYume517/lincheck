@@ -6,38 +6,43 @@
 ///|
 test "审计：start > end 的操作返回 Unknown 而不是崩溃" {
   let h = History::new()
-  h.add(
-    Operation::{
-      id: 0,
-      process: 0,
-      kind: Write(1),
-      result: Ok,
-      start: 10L,
-      end: 5L,
-    },
-  )
+  h.add(Operation::{
+    id: 0,
+    process: 0,
+    kind: Write(1),
+    result: Ok,
+    start: 10L,
+    end: 5L,
+  })
   let outcome = check_default(h, model_or_default("register"))
   match outcome {
     Unknown(_) => inspect(true, content="true")
-    Linearizable => inspect(false, content="非法区间不应判定为线性一致")
-    Violation(_) => inspect(false, content="非法区间应报 Unknown 而非 Violation")
+    Linearizable =>
+      inspect(false, content="非法区间不应判定为线性一致")
+    Violation(_) =>
+      inspect(false, content="非法区间应报 Unknown 而非 Violation")
   }
 }
 
 ///|
 test "审计：重复 id 的操作不会破坏最小反例的去重" {
   let h = History::new()
-  h.add(Operation::{ id: 7, process: 0, kind: Write(1), result: Ok, start: 0L, end: 5L })
-  h.add(
-    Operation::{
-      id: 7,
-      process: 1,
-      kind: Read,
-      result: Value(1),
-      start: 10L,
-      end: 15L,
-    },
-  )
+  h.add(Operation::{
+    id: 7,
+    process: 0,
+    kind: Write(1),
+    result: Ok,
+    start: 0L,
+    end: 5L,
+  })
+  h.add(Operation::{
+    id: 7,
+    process: 1,
+    kind: Read,
+    result: Value(1),
+    start: 10L,
+    end: 15L,
+  })
   let outcome = check_default(h, model_or_default("register"))
   let code = match outcome {
     Linearizable => 0
@@ -70,9 +75,30 @@ test "行为：模型 apply 不得原地修改传入状态（回溯正确性前�
 ///|
 test "行为：缓存关闭与开启结论一致（register_bad）" {
   let h = History::new()
-  h.add(Operation::{ id: 0, process: 0, kind: Write(1), result: Ok, start: 0L, end: 10L })
-  h.add(Operation::{ id: 1, process: 1, kind: Write(2), result: Ok, start: 12L, end: 20L })
-  h.add(Operation::{ id: 2, process: 0, kind: Read, result: Value(1), start: 30L, end: 40L })
+  h.add(Operation::{
+    id: 0,
+    process: 0,
+    kind: Write(1),
+    result: Ok,
+    start: 0L,
+    end: 10L,
+  })
+  h.add(Operation::{
+    id: 1,
+    process: 1,
+    kind: Write(2),
+    result: Ok,
+    start: 12L,
+    end: 20L,
+  })
+  h.add(Operation::{
+    id: 2,
+    process: 0,
+    kind: Read,
+    result: Value(1),
+    start: 30L,
+    end: 40L,
+  })
   let no_cache = CheckConfig::{
     time_budget_ms: 5000,
     max_states: 0,
@@ -104,8 +130,22 @@ test "行为：allow_unknown_results 宽松模式下 Nil 可匹配任意期望" 
     allow_unknown_results: true,
   }
   let h = History::new()
-  h.add(Operation::{ id: 0, process: 0, kind: Write(1), result: Ok, start: 0L, end: 10L })
-  h.add(Operation::{ id: 1, process: 1, kind: Read, result: Nil, start: 20L, end: 30L })
+  h.add(Operation::{
+    id: 0,
+    process: 0,
+    kind: Write(1),
+    result: Ok,
+    start: 0L,
+    end: 10L,
+  })
+  h.add(Operation::{
+    id: 1,
+    process: 1,
+    kind: Read,
+    result: Nil,
+    start: 20L,
+    end: 30L,
+  })
   let code_strict = match check(h, model_or_default("register"), strict) {
     Linearizable => 0
     Violation(_) => 1
@@ -127,16 +167,22 @@ test "审计：极小时间预算下大并发历史返回 Unknown 而不是挂�
   let mut id = 0
   for p in 0..<8 {
     for _ in 0..<5 {
-      h.add(
-        Operation::{
-          id,
-          process: p,
-          kind: if id % 2 == 0 { Write(id) } else { Read },
-          result: if id % 2 == 0 { Ok } else { Value(0) },
-          start: 0L,
-          end: 100L,
+      h.add(Operation::{
+        id,
+        process: p,
+        kind: if id % 2 == 0 {
+          Write(id)
+        } else {
+          Read
         },
-      )
+        result: if id % 2 == 0 {
+          Ok
+        } else {
+          Value(0)
+        },
+        start: 0L,
+        end: 100L,
+      })
       id = id + 1
     }
   }
@@ -183,17 +229,23 @@ test "审计：set 模型 64 位位图的跨字边界" {
     match m.apply(st0, Append(bit)) {
       Some((st1, _)) => {
         let nonzero = st1[0] != 0 || st1[1] != 0
-        if !nonzero { all_ok = false }
+        if !nonzero {
+          all_ok = false
+        }
         match m.apply(st1, Pop) {
           Some((st2, res)) => {
             let emptied = st2[0] == 0 && st2[1] == 0
-            if !emptied { all_ok = false }
+            if !emptied {
+              all_ok = false
+            }
             let popped_ok = match res {
               Empty => false
               Value(v) => v == bit
               _ => true
             }
-            if !popped_ok { all_ok = false }
+            if !popped_ok {
+              all_ok = false
+            }
           }
           None => all_ok = false
         }
@@ -209,9 +261,9 @@ test "审计：queue 模型 FIFO 顺序" {
   let m = queue_model()
   let st0 = m.init()
   match m.apply(st0, Append(1)) {
-    Some((st1, _)) => {
+    Some((st1, _)) =>
       match m.apply(st1, Append(2)) {
-        Some((st2, _)) => {
+        Some((st2, _)) =>
           match m.apply(st2, Pop) {
             Some((st3, res1)) => {
               let ok1 = match res1 {
@@ -232,10 +284,8 @@ test "审计：queue 模型 FIFO 顺序" {
             }
             None => inspect(false, content="first pop should be legal")
           }
-        }
         None => inspect(false, content="true")
       }
-    }
     None => inspect(false, content="true")
   }
 }
@@ -257,4 +307,3 @@ test "审计：counter 模型拒绝回退" {
   }
   inspect(accepted, content="true")
 }
-

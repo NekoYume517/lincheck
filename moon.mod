@@ -23,6 +23,3 @@ description = "Linearizability checker: Wing-Gong-Lowe search over concurrent hi
 import {
   "moonbitlang/x@0.5.5",
 }
-
-
-
