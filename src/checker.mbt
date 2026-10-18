@@ -470,7 +470,10 @@ fn build_explanation(
 
     let before : Array[Operation] = []
     for op in ops {
-      if op.id != bad.id && happens_before(op, bad) {
+      // 按对象相等排除 bad 自身，而不是按 id：id 只是报告用标签，不保证
+      // 唯一（audit_test 已锁定重复 id 合法）。按 id 过滤会把另一个
+      // 同 id、但真正 happens-before 的操作从证据里误删。
+      if op != bad && happens_before(op, bad) {
         before.push(op)
       }
     }

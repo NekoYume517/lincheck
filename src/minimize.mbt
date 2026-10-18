@@ -118,11 +118,17 @@ pub fn[M : Model] still_violates(
 // ── 可解释性判定器 ────────────────────────────────────────────────────
 
 ///|
-/// 无序对缓存键（id 为非负小整数）
-fn pair_key(a : Int32, b : Int32) -> Int32 {
+/// 无序对缓存键。
+///
+/// 用 Int64 中转：id 不要求连续也不要求是小整数，旧的
+/// `lo * 100003 + hi` 在 32 位乘法下会回绕，两个不同操作对映射到
+/// 同一键，Expl.pairs 缓存把 A 对的判定结果错给 B 对用。
+/// lo < 2^31、hi < 2^31 时 (lo<<32)|hi 在 Int64 内无碰撞。
+/// 标 pub 仅为可测性（黑盒测试直接覆盖碰撞边界）。
+pub fn pair_key(a : Int32, b : Int32) -> Int64 {
   let lo = if a < b { a } else { b }
   let hi = if a < b { b } else { a }
-  lo * 100003 + hi
+  (lo.to_int64() << 32) | (hi.to_int64() & 0xFFFFFFFFL)
 }
 
 ///|
@@ -131,7 +137,7 @@ pub(all) struct Expl {
   /// id -> 该操作单独相对初始状态是否已经违规
   illegal : Map[Int32, Bool]
   /// 两操作对是否合法缓存
-  pairs : Map[Int32, Bool]
+  pairs : Map[Int64, Bool]
 }
 
 ///|

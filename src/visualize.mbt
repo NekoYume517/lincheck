@@ -296,7 +296,8 @@ pub fn order_facts(ops : Array[Operation]) -> String {
   let sb = StringBuilder()
   for a in ops {
     for b in ops {
-      if a.id != b.id && happens_before(a, b) {
+      // 同 build_explanation：按对象相等排除自身，id 可能重复
+      if a != b && happens_before(a, b) {
         sb.write_string("    · ")
         sb.write_string(op_summary(a))
         sb.write_string("(proc \{a.process}) 先于 ")
