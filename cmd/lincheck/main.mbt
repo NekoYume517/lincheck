@@ -303,11 +303,14 @@ fn cmd_check(cli : Cli) -> Int32 raise {
     max_states: 200000,
     allow_unknown_results: false,
   }
-  let history = load_history(cli.history_path)
+  // 先校验参数、再读数据：模型拼错 + 文件缺失同时存在时，
+  // 应报「用法错误」(2) 而不是「数据错误」(4)——命令是你自己敲错的，
+  // 修复动作是改命令行，不是修文件。
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
   }
+  let history = load_history(cli.history_path)
   match @lib.check(history, model, cfg) {
     @lib.Linearizable => {
       if cli.json {
@@ -364,11 +367,12 @@ fn render_ops_indented(ops : Array[@lib.Operation]) -> String {
 
 ///|
 fn cmd_minimize(cli : Cli) -> Int32 raise {
-  let history = load_history(cli.history_path)
+  // 与 cmd_check 同理：用法错误（2）优先于数据错误（4）。
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
   }
+  let history = load_history(cli.history_path)
   let original_n = history.length()
   // --budget-ms 之前被硬编码的 default() 吞掉：用户给 10ms 就是想让大历史
   // 快速返回，结果工具默默按 5s 跑 —— 显式参数必须生效。
@@ -428,11 +432,12 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
 
 ///|
 fn cmd_visualize(cli : Cli) -> Int32 raise {
-  let history = load_history(cli.history_path)
+  // 与 cmd_check 同理：用法错误（2）优先于数据错误（4）。
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
   }
+  let history = load_history(cli.history_path)
   match @lib.check(history, model, @lib.CheckConfig::default()) {
     @lib.Linearizable => {
       println(@lib.render_timeline(history))
