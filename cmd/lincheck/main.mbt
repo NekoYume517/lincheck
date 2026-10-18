@@ -144,12 +144,7 @@ pub fn parse_double_arg(s : String) -> Double? {
   let parts = body.split(".").collect()
   if parts.length() == 1 {
     match parse_int_arg(body) {
-      Some(v) =>
-        if neg {
-          Some(-v.to_double())
-        } else {
-          Some(v.to_double())
-        }
+      Some(v) => if neg { Some(-v.to_double()) } else { Some(v.to_double()) }
       None => None
     }
   } else if parts.length() == 2 {
