@@ -83,7 +83,14 @@ fn default_cli(cmd : String) -> Cli {
 
 ///|
 /// 解析整数（允许前导 -）。手写逐位累加，不依赖标准库解析函数。
-fn parse_int_arg(s : String) -> Int32? {
+///
+/// 溢出防护：累加前先判断 `acc` 是否还会溢出（Int32 上限 2147483647），
+/// 溢出返回 None 让调用方报「参数值非法」，而不是静默回绕成另一个数。
+/// `-2147483648` 单独放行：它的绝对值超 Int32 上限，但取负后合法。
+///
+/// 标 `pub` 仅为可测性：可执行包没有下游消费者，黑盒测试（主包的
+/// `*_test.mbt` 只能看到 pub 符号）需要直接覆盖溢出与符号的边界。
+pub fn parse_int_arg(s : String) -> Int32? {
   if s.length() == 0 {
     return None
   }
@@ -96,14 +103,23 @@ fn parse_int_arg(s : String) -> Int32? {
   if body.length() == 0 {
     return None
   }
+  // Int32 上限 2147483647：累加前判断 acc 是否还会溢出，溢出返回 None
+  // 让调用方报「参数值非法」，而不是静默回绕成另一个数。
   let mut acc = 0
   for ch in body.to_array() {
     if !ch.is_ascii_digit() {
       return None
     }
-    acc = acc * 10 + (ch.to_int() - '0'.to_int())
+    let d = ch.to_int() - '0'.to_int()
+    if acc > (2147483647 - d) / 10 {
+      return None
+    }
+    acc = acc * 10 + d
   }
   if neg {
+    if acc == 0 {
+      return Some(-2147483648)
+    }
     Some(-acc)
   } else {
     Some(acc)
@@ -111,12 +127,29 @@ fn parse_int_arg(s : String) -> Int32? {
 }
 
 ///|
-/// 解析 "0.5" / "1" 这类简单浮点
-fn parse_double_arg(s : String) -> Double? {
-  let parts = s.split(".").collect()
+/// 解析 "0.5" / "1" 这类简单浮点。
+///
+/// 符号必须对整个数值生效：小数部分只按无符号数解析，最后统一乘上
+/// 整体符号。直接把负号塞给整数段会让 `-0.5` 变成 `+0.5`（整数段是
+/// 0，负号被静默丢掉），`-1.5` 变成 `-0.5`。
+///
+/// 标 `pub` 仅为可测性，理由同 parse_int_arg。
+pub fn parse_double_arg(s : String) -> Double? {
+  let mut body = s
+  let mut neg = false
+  if body.length() > 0 && body[0] == '-' {
+    neg = true
+    body = body.substring(start=1, end=body.length())
+  }
+  let parts = body.split(".").collect()
   if parts.length() == 1 {
-    match parse_int_arg(s) {
-      Some(v) => Some(v.to_double())
+    match parse_int_arg(body) {
+      Some(v) =>
+        if neg {
+          Some(-v.to_double())
+        } else {
+          Some(v.to_double())
+        }
       None => None
     }
   } else if parts.length() == 2 {
@@ -138,7 +171,12 @@ fn parse_double_arg(s : String) -> Double? {
       scale = scale * 10.0
       i = i + 1
     }
-    Some(whole.to_double() + frac.to_double() / scale)
+    let value = whole.to_double() + frac.to_double() / scale
+    if neg {
+      Some(-value)
+    } else {
+      Some(value)
+    }
   } else {
     None
   }
