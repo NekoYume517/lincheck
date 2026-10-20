@@ -22,6 +22,11 @@ fn reg() -> AnyModel {
   Register(register_model())
 }
 
+///|
+fn st() -> AnyModel {
+  Set(set_model())
+}
+
 // 3 个操作的真违规样例：两次写不重叠，读却读到旧值
 
 ///|
@@ -211,4 +216,32 @@ test "remove_chunk drops the right range" {
   // 越界块只能删到末尾
   let tail = remove_chunk(ops, 2, 5)
   assert_eq(tail.length(), 2)
+}
+
+///|
+// 回归：含重复操作 id 的违规历史，minimize 不得崩溃（abort）。
+// 项目自身测试 audit_test.mbt 已锁定「重复 id 合法」，但 Expl 缓存与
+// explainable 的「排除自己」逻辑按 op.id 区分身份，同 id 的不同操作会
+// 互相串味 / 被误当自己排除，最终 ddmin 拒掉所有候选、shrink 兜底 abort。
+test "minimize 不崩溃于含重复 id 的历史（register）" {
+  // 两条 id=1 操作（W=2 与 R->1）共享 id，但内容不同。
+  let hist = hist_of([
+    mk_op(0, 0, Write(1), Ok, 0L, 10L),
+    mk_op(1, 1, Write(2), Ok, 12L, 20L),
+    mk_op(1, 2, Read, Value(1), 30L, 40L),
+  ])
+  // 必须正常返回 Violation，不 panic。
+  let v = minimize(hist, reg(), CheckConfig::default())
+  assert_true(v.ops.length() >= 1)
+}
+
+///|
+// 同样的崩溃在 set 模型也存在（与具体模型无关）。
+test "minimize 不崩溃于含重复 id 的历史（set）" {
+  let hist = hist_of([
+    mk_op(3, 0, Append(5), Ok, 0L, 1L),
+    mk_op(3, 1, Pop, Bool(false), 2L, 3L),
+  ])
+  let v = minimize(hist, st(), CheckConfig::default())
+  assert_true(v.ops.length() >= 1)
 }

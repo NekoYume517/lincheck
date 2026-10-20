@@ -70,6 +70,22 @@ pub fn op_line(op : Operation) -> String {
 }
 
 ///|
+/// 操作的内容指纹（**不含 op.id**）——`Expl` 缓存的键。
+///
+/// 为什么不能用 `op.id`：项目自身测试（audit_test.mbt）已锁定「重复 id 合法」。
+/// 两条同 id 但内容不同的操作（例如 dup-id 反例里的 `W=2` 与 `R->1`）若共用
+/// 一个 id 键，`is_illegal` 会把 A 的判定结果错发给 B，`explainable` 的
+/// 「排除自己」也会把同 id 的同伴误判成自己而漏掉解释者，最终 ddmin 拒绝所有
+/// 候选、`shrink` 兜底 `abort`（minimize 在 CLI 上表现为运行时崩溃）。
+///
+/// 指纹排除 id，只描述「这个操作做了什么、在什么时刻、结果如何」——
+/// 同 id 不同内容的操作各自独立判定；两条完全相同的操作复用缓存是无害的
+/// （判定只依赖内容）。
+fn op_key(op : Operation) -> String {
+  "\{op.process}|\{kind_label(op.kind)}|\{result_label(op.result)}|\{op.start}|\{op.end}"
+}
+
+///|
 /// 用操作子集构造历史（用于反复试探）
 pub fn ops_to_history(ops : Array[Operation]) -> History {
   History::{ operations: ops.copy(), }
@@ -118,7 +134,12 @@ pub fn[M : Model] still_violates(
 // ── 可解释性判定器 ────────────────────────────────────────────────────
 
 ///|
-/// 无序对缓存键。
+/// 无序对缓存键（历史遗留，`Expl` 缓存已改用内容指纹 `op_key`）。
+///
+/// 保留原因：`audit2_test.mbt` 的「大 id 碰撞修复」回归测试仍直接覆盖它，
+/// 该测试锁定了旧的 `lo * 100003 + hi` 32 位乘法回绕问题。
+/// **不要在新代码里用它做 Expl 缓存键**：它按 `op.id` 计算，而重复 id
+/// 合法（audit_test.mbt 锁定），同 id 的不同操作会映射到同一键。
 ///
 /// 用 Int64 中转：id 不要求连续也不要求是小整数，旧的
 /// `lo * 100003 + hi` 在 32 位乘法下会回绕，两个不同操作对映射到
@@ -133,11 +154,14 @@ pub fn pair_key(a : Int32, b : Int32) -> Int64 {
 
 ///|
 /// 可解释性判定器：缓存「单操作是否孤立非法」与「两操作对是否合法」
+///
+/// 缓存键是**内容指纹**（见 `op_key`），不是 `op.id`：重复 id 合法，
+/// 按 id 键会让同 id 的不同操作互相串味。
 pub(all) struct Expl {
-  /// id -> 该操作单独相对初始状态是否已经违规
-  illegal : Map[Int32, Bool]
-  /// 两操作对是否合法缓存
-  pairs : Map[Int64, Bool]
+  /// 内容指纹 -> 该操作单独相对初始状态是否已经违规
+  illegal : Map[String, Bool]
+  /// 两操作对是否合法缓存（键为两个指纹排序拼接）
+  pairs : Map[String, Bool]
 }
 
 ///|
@@ -153,7 +177,8 @@ pub fn[M : Model] Expl::is_illegal(
   model : M,
   config : CheckConfig,
 ) -> Bool {
-  match self.illegal.get(op.id) {
+  let key = op_key(op)
+  match self.illegal.get(key) {
     Some(v) => v
     None => {
       let single : Array[Operation] = [op]
@@ -161,7 +186,7 @@ pub fn[M : Model] Expl::is_illegal(
         Violation(_) => true
         _ => false
       }
-      self.illegal[op.id] = v
+      self.illegal[key] = v
       v
     }
   }
@@ -176,7 +201,10 @@ pub fn[M : Model] Expl::pair_explains(
   model : M,
   config : CheckConfig,
 ) -> Bool {
-  let key = pair_key(a.id, b.id)
+  // 无序对：按指纹字典序拼接，保证 (a,b) 与 (b,a) 命中同一缓存槽
+  let ka = op_key(a)
+  let kb = op_key(b)
+  let key = if ka < kb { "\{ka}|\{kb}" } else { "\{kb}|\{ka}" }
   match self.pairs.get(key) {
     Some(v) => v
     None => {
@@ -195,17 +223,20 @@ pub fn[M : Model] Expl::pair_explains(
 ///|
 /// 候选子集是否满足可解释性约束：
 /// 每个「孤立非法」的操作，都必须有一个同伴能把它解释掉。
+///
+/// 「排除自己」用**数组下标**而非 `op.id`：同 id 的不同操作是真正的同伴，
+/// 按 id 排除会把它们当自己而漏掉解释者。
 pub fn[M : Model] explainable(
   subset : Array[Operation],
   model : M,
   config : CheckConfig,
   expl : Expl,
 ) -> Bool {
-  for op in subset {
+  for i, op in subset {
     if expl.is_illegal(op, model, config) {
       let mut explained = false
-      for other in subset {
-        if other.id != op.id && expl.pair_explains(op, other, model, config) {
+      for j, other in subset {
+        if j != i && expl.pair_explains(op, other, model, config) {
           explained = true
         }
       }

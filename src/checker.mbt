@@ -554,34 +554,30 @@ fn build_violation(
   ops : Array[Operation],
   model_name : String,
 ) -> Violation {
-  // 相关操作 = 最长一致前缀 + 卡住的那个；按 id 升序、去重
-  let ids : Array[Int32] = []
+  // 相关操作 = 最长一致前缀 + 卡住的那个。
+  //
+  // **按 ops 下标收集，不按 id 去重**：项目自身测试（audit_test.mbt）已
+  // 锁定「重复 id 合法」，而同一 id 完全可以属于两条不同内容的操作
+  // （例如 dup-id 反例里的 `W=2` 与 `R->1` 都是 id=1）。旧的「按 id 去重 +
+  // 再按 id 反查挑操作」会让重复 id 只保留首个匹配项，见证里丢掉真正
+  // 卡住的那条操作 —— 挑出来的子集线性一致，`shrink` 因此判定
+  // 「种子本身不违规」而 abort，minimize 在 CLI 上表现为运行时崩溃。
+  let subset : Array[Operation] = []
   for idx in ctx.best_prefix {
-    let id = ops[idx].id
-    if !ids.contains(id) {
-      ids.push(id)
-    }
+    subset.push(ops[idx])
   }
   if ctx.best_fail >= 0 {
-    let id = ops[ctx.best_fail].id
-    if !ids.contains(id) {
-      ids.push(id)
-    }
+    subset.push(ops[ctx.best_fail])
   }
-  ids.sort_by(fn(a, b) { a - b })
 
   // 按 **id 升序** 组装（API.md 承诺 witness 按 id 升序）。旧实现按文件
   // 行序遍历 ops，行序被打乱的历史会输出 2,0,1 这样的乱序见证，而
   // minimize 走 sort_ops_by_id 是升序 —— 两条路径输出不一致。
-  let subset : Array[Operation] = []
-  for want in ids {
-    for op in ops {
-      if op.id == want {
-        subset.push(op)
-        break
-      }
-    }
-  }
+  //
+  // MoonBit 的 Array::sort_by 是稳定排序，所以同 id 的条目保持
+  // best_prefix 里的原始相对顺序，输出可复现。
+  subset.sort_by(fn(a, b) { a.id - b.id })
+
   // 兜底：连一步都没走通（例如第一个操作就不合法）时报告全部操作，
   // 否则上游拿不到任何证据。
   let final_ops = if subset.length() == 0 { ops.copy() } else { subset }
