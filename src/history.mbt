@@ -257,12 +257,8 @@ pub(all) suberror HistoryError {
 /// - 超范围的字面量曾被静默回绕（`4294967297` → 1）。
 /// 两种情形都让该行变 BadLine——契约要求非法行报错，不做有损转换。
 fn json_int(m : Map[String, Json], key : String) -> Int32? {
-  match m.get(key) {
-    Some(Number(v, ..)) => {
-      if v != v.trunc() {
-        return None
-      }
-      let i = v.to_int64()
+  match json_int64(m, key) {
+    Some(i) => {
       if i < -2147483648L || i > 2147483647L {
         return None
       }
@@ -275,21 +271,127 @@ fn json_int(m : Map[String, Json], key : String) -> Int32? {
 ///|
 /// 从 JSON 对象里取一个 64 位整数（时间戳用）。
 ///
-/// 非「数学上的整数」直接拒绝；Double 只有 53 位有效整数，达到 ±2^63
-/// 边界外的字面量本身已损失精度，也拒绝——绝不静默回绕。
+/// 从数字原文解析，不经 Double 舍入；小数和指数形式仅在精确值为整数时接受。
 fn json_int64(m : Map[String, Json], key : String) -> Int64? {
   match m.get(key) {
-    Some(Number(v, ..)) => {
-      if v != v.trunc() {
+    Some(Number(v, repr~)) => {
+      match repr {
+        Some(text) => return exact_json_integer(text)
+        None => ()
+      }
+      // A programmatically constructed Number may lack source text. Only the
+      // conventional safe-integer range can then be accepted without guessing.
+      if v.is_nan() || v != v.trunc() {
         return None
       }
-      if v < -9223372036854775808.0 || v >= 9223372036854775808.0 {
+      if v < -9007199254740991.0 || v > 9007199254740991.0 {
         return None
       }
       Some(v.to_int64())
     }
     _ => None
   }
+}
+
+///|
+/// Normalize a valid JSON number into an integer without allocating exponent
+/// padding or first accumulating an overflowing mantissa. Decimal trailing zeros
+/// cancel negative exponents. Negative accumulation supports Int64::MIN exactly.
+fn exact_json_integer(text : StringView) -> Int64? {
+  let n = text.length()
+  if n == 0 {
+    return None
+  }
+  let negative = text[0] == '-'
+  let mut i = if negative { 1 } else { 0 }
+  let digits : Array[Int32] = []
+  let mut fractional = 0
+  let mut after_dot = false
+  while i < n && text[i] != 'e' && text[i] != 'E' {
+    let c = text[i]
+    if c == '.' {
+      after_dot = true
+    } else if c >= '0' && c <= '9' {
+      digits.push(c.to_int() - 48)
+      if after_dot {
+        fractional = fractional + 1
+      }
+    } else {
+      return None
+    }
+    i = i + 1
+  }
+  if digits.length() == 0 {
+    return None
+  }
+  let mut exponent = 0L
+  if i < n {
+    i = i + 1
+    let mut exponent_negative = false
+    if i < n && (text[i] == '-' || text[i] == '+') {
+      exponent_negative = text[i] == '-'
+      i = i + 1
+    }
+    // Beyond this bound the exponent cannot cancel the finite mantissa length
+    // or produce an in-range nonzero Int64. Saturation avoids exponent overflow.
+    let exponent_cap = n.to_int64() + 20L
+    if i == n {
+      return None
+    }
+    while i < n {
+      let c = text[i]
+      if c < '0' || c > '9' {
+        return None
+      }
+      if exponent < exponent_cap {
+        exponent = exponent * 10L + (c.to_int() - 48).to_int64()
+        if exponent > exponent_cap {
+          exponent = exponent_cap
+        }
+      }
+      i = i + 1
+    }
+    if exponent_negative {
+      exponent = -exponent
+    }
+  }
+  let mut first = 0
+  while first < digits.length() && digits[first] == 0 {
+    first = first + 1
+  }
+  if first == digits.length() {
+    return Some(0L)
+  }
+  let mut last = digits.length() - 1
+  while digits[last] == 0 {
+    last = last - 1
+  }
+  let shift = exponent -
+    fractional.to_int64() +
+    (digits.length() - 1 - last).to_int64()
+  let significant = last - first + 1
+  if shift < 0L || significant.to_int64() + shift > 19L {
+    return None
+  }
+  let minimum = if negative {
+    -9223372036854775808L
+  } else {
+    -9223372036854775807L
+  }
+  let quotient = minimum / 10L
+  let remainder = -(minimum % 10L)
+  let mut value = 0L
+  let mut pos = first
+  let end = last + 1 + shift.to_int()
+  while pos < end {
+    let digit = if pos <= last { digits[pos].to_int64() } else { 0L }
+    if value < quotient || (value == quotient && digit > remainder) {
+      return None
+    }
+    value = value * 10L - digit
+    pos = pos + 1
+  }
+  Some(if negative { value } else { -value })
 }
 
 ///|
@@ -314,8 +416,90 @@ fn json_bool(m : Map[String, Json], key : String) -> Bool? {
 ///|
 /// 包装 `@json.parse`，把 ParseError 转成可放进 `HistoryError` 的文本。
 fn parse_json(text : StringView) -> Result[Json, String] {
-  Ok(@json.parse(text)) catch {
-    _ => Err("不是合法的 JSON")
+  let parsed = @json.parse(text) catch {
+    _ => return Err("不是合法的 JSON")
+  }
+  // core/json preserves large integer reprs, but decimal/exponent fast paths
+  // may omit them. Parse a shape-identical tree with numeric tokens quoted to
+  // recover every lexeme; only original Number nodes receive the source text.
+  let quoted = @json.parse(quote_json_numbers(text)) catch {
+    _ => return Err("不是合法的 JSON")
+  }
+  Ok(restore_number_reprs(parsed, quoted))
+}
+
+///|
+fn quote_json_numbers(text : StringView) -> String {
+  let sb = StringBuilder()
+  let mut i = 0
+  let mut chunk = 0
+  let mut in_string = false
+  let mut escaped = false
+  while i < text.length() {
+    let c = text[i]
+    if in_string {
+      if escaped {
+        escaped = false
+      } else if c == '\\' {
+        escaped = true
+      } else if c == '"' {
+        in_string = false
+      }
+      i = i + 1
+    } else if c == '"' {
+      in_string = true
+      i = i + 1
+    } else if c == '-' || (c >= '0' && c <= '9') {
+      sb.write_view(text[chunk:i])
+      let start = i
+      i = i + 1
+      while i < text.length() {
+        let digit = text[i]
+        if (digit >= '0' && digit <= '9') ||
+          digit == '.' ||
+          digit == 'e' ||
+          digit == 'E' ||
+          digit == '+' ||
+          digit == '-' {
+          i = i + 1
+        } else {
+          break
+        }
+      }
+      sb.write_char('"')
+      sb.write_view(text[start:i])
+      sb.write_char('"')
+      chunk = i
+    } else {
+      i = i + 1
+    }
+  }
+  sb.write_view(text[chunk:])
+  sb.to_string()
+}
+
+///|
+fn restore_number_reprs(parsed : Json, source : Json) -> Json {
+  match (parsed, source) {
+    (Number(value, ..), String(text)) => Json::number(value, repr=text)
+    (Object(values), Object(texts)) => {
+      let out : Map[String, Json] = Map([])
+      for key, value in values {
+        out[key] = match texts.get(key) {
+          Some(raw) => restore_number_reprs(value, raw)
+          None => value
+        }
+      }
+      Json::object(out)
+    }
+    (Array(values), Array(texts)) => {
+      let out : Array[Json] = []
+      for i, value in values {
+        out.push(restore_number_reprs(value, texts[i]))
+      }
+      Json::array(out)
+    }
+    _ => parsed
   }
 }
 

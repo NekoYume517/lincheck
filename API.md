@@ -64,6 +64,13 @@ JSONL 每行（**字段名固定**）：
 {"id":0,"process":0,"kind":{"tag":"Write","value":1},"result":{"tag":"Ok"},"start":0,"end":10}
 ```
 
+`start` 和 `end` 在完整 Int64 范围内精确解析，包含超过 2^53 的时间戳；
+小数、科学计数法仅在其十进制精确值为范围内整数时接受。`id`、`process`
+和操作参数同样必须是精确 Int32，不能通过浮点舍入变成整数。
+解析器保留原始数字文本：先由 core/json 验证，再解析一份数字 token 被引用
+为字符串的同结构树，为原 Number 补齐原文。字符串、转义键和重复键遵循
+core/json 语义。这需要每行两次 JSON 解析，换取十进制和指数形式的精确性。
+
 ## 2. 抽象对象模型 `src/model.mbt`
 
 ```moonbit
