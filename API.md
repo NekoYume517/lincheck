@@ -75,6 +75,9 @@ pub trait Model {
   /// 应用操作，返回 (新状态, 期望的返回值)
   /// 如果该操作在此状态下非法，返回 None
   apply(Self, State, OpKind) -> (State, OpResult)?
+  /// 校验已知实际结果；默认比较 expected/actual（模型显式 Nil 期望为通配）。
+  /// 非确定模型应覆写并限制合法结果集。state 为操作执行前的状态。
+  accepts(Self, State, OpKind, OpResult, OpResult) -> Bool = _
   /// 状态相等（用于缓存）
   state_eq(Self, State, State) -> Bool
   /// 状态哈希（用于缓存）
@@ -95,7 +98,7 @@ pub fn queue_model() -> Model             // 队列：Append/Pop
 
 - **register**：`State = [value]`。Write(v) → `[v]`，期望 Ok；Read → `[v]`，期望 Value(v)；Cas(e,n) → 若 v==e 则 `[n]` 期望 Bool(true)，否则 `[]` 期望 Bool(false)（状态不变）。
 - **counter**：`State = [value]`。只增不减。
-- **set**：`State = [bitmask 低 64 位]`（限制值域 0..63）。
+- **set**：`State = [低32位掩码, 高32位掩码]`（限制值域 0..63）。Write/Append 插入，Pop 删除最小成员并返回 Bool；Read 可返回任一当前成员 `Value(v)`，空集返回 `Value(-1)`。`apply` 提供最小成员作为生成器用的合法代表结果，`accepts` 校验实际返回的成员资格。
 - **queue**：`State = [元素编码为定长序列]`。
 
 ## 3. 核心检查器 `src/checker.mbt`
@@ -128,8 +131,8 @@ pub(all) struct CheckConfig {
   time_budget_ms : Int32       // 默认 5000
   max_states : Int32           // 缓存上限，默认 200_000
   /// 是否把历史记录中的 Nil 结果视为"可以返回任意值"（宽松模式）。
-  /// 另有一层独立语义：**模型**返回的 Nil 期望是通配（任何实际结果
-  /// 都匹配），与本开关无关——那是模型作者声明非确定返回的手段。
+  /// 任何实际 Nil 只在本开关为 true 时接受。已知结果通过 Model::accepts
+  /// 校验；默认实现允许模型显式 Nil 期望作为通配，集合模型不用该通配。
   allow_unknown_results : Bool
 }
 
@@ -150,7 +153,7 @@ pub fn check_default(history : History, model : Model) -> CheckOutcome
 
 对每个候选 op（按 start 排序保证确定性）:
     match model.apply(current, op.kind):
-        Some((next, expected)) if expected == op.result ->
+        Some((next, expected)) if model.accepts(current, op.kind, expected, op.result) ->
             递归(next, linearized + op, ...)
             若成功 return Linearizable
         _ -> 剪枝（该候选不可能）

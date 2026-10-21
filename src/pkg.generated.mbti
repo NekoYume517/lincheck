@@ -239,6 +239,7 @@ pub trait Model {
   fn name(Self) -> String
   fn init(Self) -> Array[Int]
   fn apply(Self, Array[Int], OpKind) -> (Array[Int], OpResult)?
+  fn accepts(Self, Array[Int], OpKind, OpResult, OpResult) -> Bool
   fn state_eq(Self, Array[Int], Array[Int]) -> Bool
   fn state_hash(Self, Array[Int]) -> Int
 }

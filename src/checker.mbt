@@ -137,26 +137,18 @@ struct SearchState {
 ///
 /// 严格模式要求 `OpResult` 完全相等；宽松模式额外允许历史记录为 `Nil`
 /// （结果未知）的操作匹配任意期望值——模拟"这次采样没拿到返回值"。
-fn result_matches(
+fn[M : Model] result_matches(
+  model : M,
+  state : State,
+  kind : OpKind,
   expected : OpResult,
   actual : OpResult,
   allow_unknown : Bool,
 ) -> Bool {
-  // **模型期望 Nil = 通配**（模型作者主动声明"这个操作的返回值是非确定的"，
-  // 例如集合上并发插入后的读——任何成员都是合法答案）。
-  // 注意方向：Nil 在 expected 位置是通配；在 actual 位置只有
-  // allow_unknown（宽松模式）才通配 —— 历史记录里的 Nil 是"结果未知"，
-  // 不是"任意值都行"，严格模式下它与任何期望都不匹配。
-  if expected is Nil {
-    return true
-  }
-  if allow_unknown {
-    match (expected, actual) {
-      (_, Nil) => true
-      (a, b) => a == b
-    }
+  if actual is Nil {
+    allow_unknown
   } else {
-    expected == actual
+    model.accepts(state, kind, expected, actual)
   }
 }
 
@@ -342,7 +334,14 @@ fn[M : Model] dfs(
     let op = ops[idx]
     match model.apply(state, op.kind) {
       Some((next_state, expected)) =>
-        if result_matches(expected, op.result, config.allow_unknown_results) {
+        if result_matches(
+            model,
+            state,
+            op.kind,
+            expected,
+            op.result,
+            config.allow_unknown_results,
+          ) {
           // 这一步合法 → 深入一层
           remaining[idx] = false
           path.push(idx)

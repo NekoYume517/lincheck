@@ -137,4 +137,5 @@ if v > current { Some(...) } else { None }   // 拒绝了原地踏步
 - 50ms 预算下 40 个全并发操作返回 `Unknown` 而不是挂死
 - `Nil` 结果只在 `allow_unknown_results` 模式下可匹配，严格模式下是失配
 - set 模型位图在 31/32/63 位边界正确（[低32, 高32] 编码）
+- set 的 Read 通过 `Model::accepts` 验证实际值属于当前集合，空集仅接受 `Value(-1)`；`apply` 的最小成员返回值用于生成合法样本，不限制其他已存在成员。严格模式拒绝实际 `Nil`，宽松模式可显式接受未知结果。
 - queue 两次 Pop 保持 FIFO

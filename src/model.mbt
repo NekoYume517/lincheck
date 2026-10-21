@@ -36,8 +36,18 @@ pub trait Model {
   fn name(Self) -> String
   fn init(Self) -> State
   fn apply(Self, State, OpKind) -> (State, OpResult)?
+  /// Validate a known result. Override for bounded nondeterministic results.
+  /// `apply` still supplies one legal representative for generators and reports.
+  fn accepts(Self, State, OpKind, OpResult, OpResult) -> Bool = _
   fn state_eq(Self, State, State) -> Bool
   fn state_hash(Self, State) -> Int32
+}
+
+///|
+/// Deterministic models use exact equality. A custom model may explicitly use
+/// a Nil expectation as a wildcard; unknown actual results are handled by check.
+impl Model with fn accepts(_self, _state, _kind, expected, actual) {
+  expected is Nil || expected == actual
 }
 
 // ============================================================
@@ -241,7 +251,8 @@ pub fn counter_model() -> CounterModel {
 /// | `Append(v)` | `0 <= v <= 63`（重复写入也合法） | 置位 v | `Ok` |
 /// | `Pop` | 集合非空 | 清除最小元素 | `Bool(true)` |
 /// | `Pop` | 集合为空 | 不变 | `Bool(false)` |
-/// | `Read` | 无 | 不变 | `Value(最小元素)`，空集时 `Value(-1)` |
+/// | `Read` | 非空 | 不变 | 任一已包含成员的 `Value(v)` |
+/// | `Read` | 空集 | 不变 | `Value(-1)` |
 ///
 /// `Pop` 选择**最小元素**是刻意的确定性约定：不指定的话同一状态会有多个
 /// 可能的"期望返回"，搜索就变成不确定的了。
@@ -338,14 +349,30 @@ pub impl Model for SetModel with fn apply(self, state, kind) {
         Some((set_remove(state, smallest), OpResult::Bool(true)))
       }
     }
-    Read =>
-      // 集合读是**非确定的**：并发插入后，任何已包含的成员都是合法答案。
-      // 返回 Nil（通配期望）而不是钉死最小成员 —— 旧实现会把
-      // Append(1)+Append(2) 并发后的 Read->2 判成违规，而它是完全合法的
-      // （两个 append 都在 Read 开始前完成，集合包含 1 和 2）。
-      // 这正是「模型只排除物理不可能转换」原则的直接应用。
-      Some((state_copy(state), Nil))
+    // Return one legal representative; accepts checks any contained member.
+    // Nil cannot express membership because it also accepts nonexistent values.
+    Read => Some((state_copy(state), Value(set_min(state))))
     Cas(_, _) => None
+  }
+}
+
+///|
+pub impl Model for SetModel with fn accepts(
+  _self,
+  state,
+  kind,
+  expected,
+  actual,
+) {
+  match (kind, actual) {
+    (Read, Value(v)) =>
+      if v == -1 {
+        state[0] == 0 && state[1] == 0
+      } else {
+        set_contains(state, v)
+      }
+    (Read, _) => false
+    _ => expected == actual
   }
 }
 
@@ -504,6 +531,16 @@ pub impl Model for AnyModel with fn apply(self, state, kind) {
     Counter(m) => m.apply(state, kind)
     Set(m) => m.apply(state, kind)
     Queue(m) => m.apply(state, kind)
+  }
+}
+
+///|
+pub impl Model for AnyModel with fn accepts(self, state, kind, expected, actual) {
+  match self {
+    Register(m) => m.accepts(state, kind, expected, actual)
+    Counter(m) => m.accepts(state, kind, expected, actual)
+    Set(m) => m.accepts(state, kind, expected, actual)
+    Queue(m) => m.accepts(state, kind, expected, actual)
   }
 }
 
