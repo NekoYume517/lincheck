@@ -502,12 +502,12 @@ test "zero_budget_means_unlimited_and_still_terminates" {
 // ============================================================
 
 ///|
-test "nil_result_is_violation_in_strict_mode" {
-  // 读操作的结果记为 Nil（未知），严格模式下与 Value(0) 不匹配
+test "nil_result_is_unknown_in_strict_mode" {
+  // 缺失响应无法证明违反模型，严格模式下不进入搜索。
   let h = chist([cop(0, 0, Read, Nil, 0L, 10L)])
   inspect(
     outcome_str(check_default(h, model_or_default("register"))),
-    content="Violation",
+    content="Unknown",
   )
 }
 

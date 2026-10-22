@@ -8,13 +8,26 @@ produces a misleading report.
 | 0 | Linearizable | yes |
 | 1 | Violation found | yes |
 | 2 | Usage error | no — the command was wrong |
-| 3 | Unknown (search budget exhausted) | no |
+| 3 | Unknown (missing responses, invalid intervals, or search budget exhausted) | no |
 | 4 | Input data error (unreadable/unparseable file) | no — there was nothing to judge |
 
 Note: a history that *parses* but contains an invalid interval
 (`start > end`) surfaces as `3` (Unknown), not `4` — the file was readable,
 so `check` ran and reported "cannot judge" rather than "could not read".
 `4` is reserved for failures before any history exists to examine.
+
+A parsed `Nil` result means the response is unknown. Under the default
+strict configuration, the checker reports how many responses are missing
+and returns `3` before searching. `minimize` retains these operations for
+inspection without claiming a violation, and `visualize` renders the timeline
+with the same unknown verdict. Library callers can explicitly enable
+`allow_unknown_results` to assume a model-compatible response for every `Nil`;
+this still applies every recorded operation within its recorded interval and
+does not implement optional completion of pending operations.
+
+For example, `moon run cmd/lincheck -- check --history examples/unknown_results.jsonl --model register --json`
+returns `{"verdict":"unknown","reason":"...2 个未知结果..."}` and exits `3`.
+The same fixture works with `minimize` and `visualize` and also exits `3`.
 
 ## The distinction that matters
 
@@ -33,8 +46,8 @@ sends someone debugging a system that was never examined.
 
 ## Why 3 is its own code
 
-Linearizability checking is NP-hard in general. Any real history will
-eventually exceed the search budget. At that point the honest answer is
+Linearizability checking has an exponential worst case. A sufficiently hard
+history can exceed the search budget. At that point the honest answer is
 "unknown", and it must not be rounded to either neighbour:
 
 - rounding to `0` (linearizable) misses real violations

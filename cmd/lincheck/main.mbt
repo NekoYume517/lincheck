@@ -390,6 +390,15 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     let confirmed = match
       @lib.check(witness, model, @lib.CheckConfig::default()) {
       @lib.Violation(_) => true
+      @lib.Unknown(reason) => {
+        if cli.json {
+          println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
+        } else {
+          println("? UNKNOWN  \{reason}")
+          println("  \{v.explanation}")
+        }
+        return EXIT_UNKNOWN
+      }
       _ => false
     }
     if cli.json {
@@ -404,7 +413,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
         )
       }
     } else {
-      println("✗ NON-LINEARIZABLE")
+      println(if confirmed { "✗ NON-LINEARIZABLE" } else { "? UNKNOWN" })
       println("")
       println("  最小化：\{original_n} → \{v.ops.length()} 个操作")
       println(

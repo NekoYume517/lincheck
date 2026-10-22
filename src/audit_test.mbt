@@ -118,7 +118,7 @@ test "行为：缓存关闭与开启结论一致（register_bad）" {
 test "行为：allow_unknown_results 宽松模式下 Nil 可匹配任意期望" {
   let m = register_model()
   // result_matches 是 private 函数；黑盒测试改为通过完整检查行为验证：
-  // 构造一个「操作结果为 Nil」的历史，严格模式下应违规、宽松模式下应线性一致。
+  // 构造一个「操作结果为 Nil」的历史，严格模式下未知、宽松模式下应线性一致。
   let strict = CheckConfig::{
     time_budget_ms: 5000,
     max_states: 10_000,
@@ -151,7 +151,7 @@ test "行为：allow_unknown_results 宽松模式下 Nil 可匹配任意期望" 
     Violation(_) => 1
     Unknown(_) => 3
   }
-  inspect(code_strict, content="1")
+  inspect(code_strict, content="3")
   let code_loose = match check(h, model_or_default("register"), loose) {
     Linearizable => 0
     Violation(_) => 1

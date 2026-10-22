@@ -11,14 +11,7 @@ fn membership_history(result : OpResult) -> History {
 
 ///|
 test "set membership: empty set accepts only the empty sentinel" {
-  let invalid : Array[OpResult] = [
-    Value(42),
-    Value(0),
-    Ok,
-    Empty,
-    Bool(false),
-    Nil,
-  ]
+  let invalid : Array[OpResult] = [Value(42), Value(0), Ok, Empty, Bool(false)]
   for result in invalid {
     let h = History::{
       operations: [
@@ -70,7 +63,7 @@ test "set membership: read rejects invalid result shapes" {
 ///|
 test "set membership: unknown reads require explicit loose mode" {
   let h = membership_history(Nil)
-  assert_true(check_default(h, Set(set_model())) is Violation(_))
+  assert_true(check_default(h, Set(set_model())) is Unknown(_))
   let config = { ..CheckConfig::default(), allow_unknown_results: true, }
   assert_true(check_with(h, set_model(), config) is Linearizable)
 }

@@ -55,7 +55,7 @@ pub(all) enum CheckOutcome {
   Linearizable
   /// 发现反例
   Violation(Violation)
-  /// 超时/资源耗尽，结论未知
+  /// 证据不完整、区间非法或超时，结论未知
   Unknown(String)
 } derive(Debug)
 
@@ -81,6 +81,8 @@ pub(all) struct CheckConfig {
   /// 缓存条目上限。`<= 0` 表示完全关闭缓存（用于验证缓存不改变语义）。
   max_states : Int32
   /// 是否把历史里的 `Nil` 结果视为"可以是任意值"（宽松模式）。
+  /// 默认 false：含未知响应的历史返回 Unknown，不进入搜索。
+  /// true 是显式的乐观结果假设，不实现 pending 操作的可选完成语义。
   allow_unknown_results : Bool
 } derive(Debug)
 
@@ -547,6 +549,32 @@ fn validate_intervals(ops : Array[Operation]) -> String? {
 }
 
 ///|
+/// 两个检查入口共用证据预检，避免将缺失响应误判成模型不匹配。
+fn validate_check_input(
+  ops : Array[Operation],
+  config : CheckConfig,
+) -> String? {
+  match validate_intervals(ops) {
+    Some(reason) => return Some(reason)
+    None => ()
+  }
+  if !config.allow_unknown_results {
+    let mut unknown_count = 0
+    for op in ops {
+      if op.result is Nil {
+        unknown_count = unknown_count + 1
+      }
+    }
+    if unknown_count > 0 {
+      return Some(
+        "历史包含 \{unknown_count} 个未知结果（Nil），响应证据不完整，无法判定线性一致性；allow_unknown_results=true 可显式假设这些响应匹配模型，但不代表完整的 pending 操作语义。",
+      )
+    }
+  }
+  None
+}
+
+///|
 /// 从搜索上下文组装 `Violation`。
 fn build_violation(
   ctx : SearchState,
@@ -620,7 +648,7 @@ pub fn[M : Model] check_with(
   }
 
   // 区间必须合理（start <= end），否则语义无从谈起
-  match validate_intervals(ops) {
+  match validate_check_input(ops, config) {
     Some(reason) => return Unknown(reason)
     None => ()
   }
@@ -717,7 +745,7 @@ pub fn[M : Model] check_with_stats(
   if ops.length() == 0 {
     return (Linearizable, empty_stats)
   }
-  match validate_intervals(ops) {
+  match validate_check_input(ops, config) {
     Some(reason) => return (Unknown(reason), empty_stats)
     None => ()
   }

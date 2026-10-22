@@ -138,7 +138,9 @@ pub(all) struct CheckConfig {
   time_budget_ms : Int32       // 默认 5000
   max_states : Int32           // 缓存上限，默认 200_000
   /// 是否把历史记录中的 Nil 结果视为"可以返回任意值"（宽松模式）。
-  /// 任何实际 Nil 只在本开关为 true 时接受。已知结果通过 Model::accepts
+  /// 默认 false：出现实际 Nil 时返回 Unknown，并报告未知结果数量。
+  /// true 显式假设未知响应可匹配模型；它不支持 pending 操作的可选完成语义。
+  /// 已知结果通过 Model::accepts
   /// 校验；默认实现允许模型显式 Nil 期望作为通配，集合模型不用该通配。
   allow_unknown_results : Bool
 }
@@ -250,4 +252,4 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
 - **缓存正确性**：开/关缓存结果必须一致
 - **最小化**：最小化结果仍违规，且操作数 ≤ 原历史
 - **确定性**：同一输入两次运行输出相同
-- **超时**：大历史必须返回 `Unknown` 而不是挂死
+- **未知证据与超时**：严格模式的实际 Nil、非法时间区间及搜索超时返回 `Unknown`，不能据此报告并发违规。
