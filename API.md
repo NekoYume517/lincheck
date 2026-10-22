@@ -118,7 +118,7 @@ pub(all) enum CheckOutcome {
   Linearizable
   /// 发现反例
   Violation(Violation)
-  /// 超时/资源耗尽，结论未知
+  /// 响应证据不完整、区间非法或超时，结论未知
   Unknown(reason : String)
 } derive(Debug)
 

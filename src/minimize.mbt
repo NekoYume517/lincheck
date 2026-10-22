@@ -193,7 +193,8 @@ pub fn[M : Model] Expl::is_illegal(
 }
 
 ///|
-/// 两操作组合是否「能解释」：组合合法，或检查未给出确定结论
+/// 两操作组合是否「能解释」：必须由检查器确定组合线性一致。
+/// Unknown 不构成证明，也不缓存，允许之后增加预算重试。
 pub fn[M : Model] Expl::pair_explains(
   self : Expl,
   a : Operation,
@@ -209,13 +210,14 @@ pub fn[M : Model] Expl::pair_explains(
     Some(v) => v
     None => {
       let pair : Array[Operation] = [a, b]
-      let v = match probe_ops(pair, model, config) {
-        Violation(_) => false
-        Unknown(_) => true
-        Linearizable => true
+      match probe_ops(pair, model, config) {
+        Unknown(_) => false
+        outcome => {
+          let v = outcome is Linearizable
+          self.pairs[key] = v
+          v
+        }
       }
-      self.pairs[key] = v
-      v
     }
   }
 }
