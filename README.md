@@ -128,17 +128,40 @@ lincheck selfcheck --model register --seeds 100
 
 Jepsen 的报告动辄几千行，人能看懂的往往只有五行。`lincheck` 在发现违规后做 **delta debugging**：反复尝试删掉操作，只要仍然违规就保留删除，最终得到最小子集。
 
-实际输出（`examples/register_bad.jsonl`）：
+实际输出（`moon run cmd/lincheck -- minimize --history examples/register_bad.jsonl --model register`，原样粘贴）：
 
 ```
-✗ NON-LINEARIZABLE  (2 / 2 个操作)
+✗ NON-LINEARIZABLE
 
-  proc 0  W=1  ->  Ok  [0..10]
-  proc 1  W=2  ->  Ok  [12..20]
+  最小化：3 → 3 个操作
+  再验证：仍违规 ✓
 
-  非线性一致（模型 register）：最多可线性化 1 / 2 个操作，之后无路可走。
-  ……（完整解释含最长一致前缀与被迫顺序）
+    · 操作 0: proc 0  W=1  ->  Ok  [0..10]
+    · 操作 1: proc 1  W=2  ->  Ok  [12..20]
+    · 操作 2: proc 0  R  ->  Value(1)  [30..40]
+
+
+  delta debugging：3 个操作中保留 3 个仍可复现违规。
+  · proc 0  W=1  ->  Ok  [0..10]
+  · proc 1  W=2  ->  Ok  [12..20]
+  · proc 0  R  ->  Value(1)  [30..40]
+删掉其中任何一个操作，历史都会变回线性一致。
 ```
+
+`register_bad` 本来就只有 3 个操作、已经最小，所以是 **3 → 3**——这不是没生效，
+而是删掉任意一条都会变回线性一致（两次写不重叠、读必须读到 2，读到 1 就是违规）。
+要看真正压缩的样例：
+
+```
+$ moon run cmd/lincheck -- minimize --history examples/noisy_bad.jsonl --model register
+  最小化：8 → 2 个操作
+    · 操作 2: proc 2  W=2  ->  Ok  [12..20]
+    · 操作 3: proc 3  R  ->  Value(0)  [22..24]
+```
+
+8 个操作里只有这对「写已完成、读却读到旧值」是问题，其余 6 条是噪声——
+而且见证**必须保持 bug 的语义**：孤立地「读到一个从没存在过的值」会被
+可解释性守卫挡住（见下方设计要点），不会被当成最小反例输出。
 
 ## 设计要点
 
