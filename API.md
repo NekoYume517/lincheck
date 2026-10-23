@@ -2,7 +2,7 @@
 
 > **这是实现依据，不得更改签名。** 内部实现自由，但这些公开 API 必须存在且签名一致。
 
-模块名：`moonbit-hack/lincheck`，库包：`src`，CLI 包：`cmd/lincheck`。
+模块名：`NekoYume517/lincheck`，库包：`src`，CLI 包：`cmd/lincheck`。
 
 ## 1. 历史模型 `src/history.mbt`
 
