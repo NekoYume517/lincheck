@@ -716,6 +716,50 @@ test "violation_always_reports_at_least_one_op" {
 }
 
 // ============================================================
+// LC-2：depth == 0 的单操作见证必须与「真并发违规」可区分
+// ============================================================
+//
+// 现象：单操作 `Cas(expected=1, new=2) -> Bool(true)` 的历史，check 报
+// `✗ NON-LINEARIZABLE`、depth=0，看起来像并发 bug，实际是数据自相矛盾
+// （初值 0 上这个 CAS 不可能返回 true）。
+//
+// 修复方向：不新增退出码（文件读得进、解析得了，4 是给「读不到/解析不了」
+// 的；1 仍然表示「历史确实违规」这个有效结论），而是让**结论可区分**：
+// 解释文本明确指出这是历史数据不一致，JSON 输出带可编程区分的 reason。
+
+///|
+test "LC-2: 单操作不可能的见证解释为数据不一致" {
+  let h = chist([cop(0, 0, Cas(1, 2), Bool(true), 0L, 10L)])
+  match check_default(h, model_or_default("register")) {
+    Violation(v) => {
+      assert_eq(v.ops.length(), 1)
+      assert_true(v.explanation.contains("数据不一致"))
+      assert_true(v.explanation.contains("不是并发竞态"))
+      // 可编程区分（CLI --json 的 reason 字段同源）
+      inspect(violation_reason(v), content="data-inconsistency")
+    }
+    _ => inspect("<应当 Violation>", content="")
+  }
+}
+
+///|
+test "LC-2: 真并发违规的解释不标注数据不一致" {
+  let h = parse_or_empty(CK_REGISTER_BAD)
+  match check_default(h, model_or_default("register")) {
+    Violation(v) => {
+      assert_true(!v.explanation.contains("数据不一致"))
+      assert_true(v.explanation.contains("无法解释的操作"))
+      // 与单操作数据错误必须能区分开
+      inspect(violation_reason(v), content="concurrency-race")
+    }
+    _ => inspect("<应当 Violation>", content="")
+  }
+  // 搜索节点数不能因为这个改动变化（性能回归基线）
+  let (_, stats) = check_with_stats(h, register_model(), CheckConfig::default())
+  inspect(stats.explored, content="3")
+}
+
+// ============================================================
 // 交叉验证：暴力全排列参考实现
 // ============================================================
 //

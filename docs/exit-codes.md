@@ -56,6 +56,36 @@ history can exceed the search budget. At that point the honest answer is
 Keeping a third state forces the caller to decide what to do with an
 inconclusive run, which is the correct place for that decision.
 
+## Telling a data error from a race *inside* code 1
+
+`1` still means "this history really is not linearizable", but two very
+different situations produce it, and conflating them sends someone debugging a
+concurrency problem that does not exist:
+
+- **concurrency race** — no total order explains the recorded results, yet
+  every operation is individually plausible.
+- **data inconsistency** — the counterexample is a *single* operation that
+  contradicts the **initial state** (for example `Cas(1->2) -> Bool(true)` on
+  a register initialised to `0`). No interleaving can explain it; the fixture
+  or the initial-state assumption is what is wrong.
+
+Both keep exit code `1`, because the file was readable and `check` did reach a
+conclusion. The distinction is a **qualifier on a real conclusion**, so it must
+not borrow `4` ("nothing was examined") or `3` ("cannot judge").
+
+They are distinguishable in two places:
+
+- `check --json` carries `"reason":"concurrency-race"` or
+  `"reason":"data-inconsistency"` (library: `violation_reason`).
+- The human-readable explanation prints `判定：这是数据不一致，不是并发竞态`
+  for the second case, and lists the unplaceable operation for the first.
+
+```powershell
+# 数据自相矛盾：单操作，退出码仍是 1，但 reason 可编程区分
+moon run cmd/lincheck -- check --json --history fixtures/cas_bad.jsonl --model register
+# {"verdict":"non-linearizable","reason":"data-inconsistency",...}
+```
+
 ## On `visualize` and `minimize`
 
 Both subcommands run the checker as part of their work, and both inherit its

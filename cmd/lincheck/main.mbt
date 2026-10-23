@@ -237,6 +237,16 @@ fn json_violation(
   let sb = StringBuilder()
   sb.write_string("{\"verdict\":\"")
   sb.write_string(verdict)
+  // 可编程区分「真并发违规」与「历史数据自相矛盾」：两者退出码都是 1，
+  // 光看 verdict 分不出来（LC-2）。见证没能被复现时如实写 unconfirmed-witness。
+  sb.write_string("\",\"reason\":\"")
+  sb.write_string(
+    if verdict == "non-linearizable" {
+      @lib.violation_reason(v)
+    } else {
+      "unconfirmed-witness"
+    },
+  )
   sb.write_string("\",\"total\":")
   sb.write_string(history.length().to_string())
   sb.write_string(",\"witness\":[")

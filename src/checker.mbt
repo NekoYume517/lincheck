@@ -494,6 +494,21 @@ fn build_explanation(
     )
   }
 
+  // LC-2：depth 0 的单操作见证 = 历史数据自相矛盾，不是并发竞态。
+  //
+  // 搜索在 depth 0 就卡住意味着：**没有任何操作**能相对初始状态合法执行，
+  // 而 witness 里那条操作正是被初始状态否掉的那一条。此时把结论说成
+  // 「并发违规」会把人引向错误方向——没有并发交错能解释它，要查的是
+  // 历史/初值本身（例如初值 0 上记录了 CAS 返回 true 的采样）。
+  //
+  // 只在「depth == 0 且前缀为空且确实记录了失败点」时加这段：
+  // 有前缀的见证走的是正常竞态路径，不需要这种提示。
+  if depth == 0 && prefix.length() == 0 && fail_idx >= 0 {
+    sb.write_string(
+      "\n判定：这是数据不一致，不是并发竞态。\n  搜索在 depth 0 就卡住——上面这条操作相对初始状态就不可能成立，\n  没有任何并发交错能解释它。请先检查历史的初值假设或采样结果本身，\n  而不是去查数据结构里的竞态。\n",
+    )
+  }
+
   sb.write_string("\n搜索节点数：")
   sb.write_string(explored.to_string())
   sb.write_string("\n")
@@ -622,6 +637,26 @@ fn build_violation(
       model_name,
       ctx.explored,
     ),
+  }
+}
+
+///|
+/// 违规的**可编程分类**（CLI `--json` 的 `reason` 字段用同一口径）。
+///
+/// - `"data-inconsistency"`：见证只有一条操作、且搜索在 depth 0 就卡住——
+///   这条操作相对**初始状态**就不可能成立（例如初值 0 上记录了
+///   `Cas(1->2) -> Bool(true)`）。这是历史数据自相矛盾，不是并发竞态：
+///   没有任何交错能解释它，该去查历史/初值，而不是查数据结构的竞态。
+/// - `"concurrency-race"`：其余情况——需要并发交错才能解释的反例。
+///
+/// 退出码不因此改变：两种都是「历史确实非线性一致」（`1`），只是**同一结论
+/// 的两种性质**。这不借用 `4`（读不到/解析不了）或 `3`（无法判定）——
+/// 那两个表示「没有结论」，而这里结论是有的（见 `docs/exit-codes.md`）。
+pub fn violation_reason(v : Violation) -> String {
+  if v.depth == 0 && v.ops.length() == 1 {
+    "data-inconsistency"
+  } else {
+    "concurrency-race"
   }
 }
 

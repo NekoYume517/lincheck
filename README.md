@@ -74,6 +74,14 @@ lincheck selfcheck --model register --seeds 100
 > 只有 `check` 的退出码应该被当作判断依据；`visualize`/`minimize` 返回 `1`
 > 只是把它检查到的事实如实传递出来。
 
+> **退出码 `1` 内部还有一层区分**：真并发竞态
+> （`"reason":"concurrency-race"`）vs 历史数据自相矛盾
+> （`"reason":"data-inconsistency"`）。后者是「见证只有一条操作，且它相对
+> **初始状态**就不可能成立」，例如初值 0 的寄存器上记录了
+> `Cas(1->2) -> true`——没有并发交错能解释它，该去查历史/初值，而不是查
+> 数据结构的竞态。人类可读解释里会直接写明「不是并发竞态」，细节见
+> [docs/exit-codes.md](docs/exit-codes.md)。
+
 ## 历史格式
 
 每行一个操作：
