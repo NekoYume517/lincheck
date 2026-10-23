@@ -245,3 +245,170 @@ test "minimize 不崩溃于含重复 id 的历史（set）" {
   let v = minimize(hist, st(), CheckConfig::default())
   assert_true(v.ops.length() >= 1)
 }
+
+// ============================================================
+// LC-1 回归：minimize 不得输出单操作退化解
+// ============================================================
+//
+// 现象（旧实现，已实测复现）：
+//   8 条 register 操作（含 Cas）的历史，check 的违规见证只有 1 条
+//   ——`Cas(1->2) -> Bool(true)`，初值 0 上这个 CAS 不可能返回 true，
+//   属于**历史数据自相矛盾**，不是并发竞态。
+//   `minimize` 直接把这个 1 条操作的种子当见证输出（8 → 1），
+//   同时绕过了 MIN_WITNESS 下界与可解释性守卫。
+//
+// 根因：`src/minimize.mbt` 的 `shrink` 兜底分支
+//   `else if still_violates(seed, ...) { seed.copy() }`
+//   完全不调用 `explainable()`，也不检查 `min_witness`——第 341 行算出的
+//   `big_enough` 只在第一个分支用到。
+
+///|
+/// bugA 的形状：8 条 register 操作；min_end 是那条不可能的 CAS，
+/// 于是 check 的搜索在 depth 0 就停住，见证只有 1 条操作。
+/// 历史里另有一组**可解释的**真反例：
+///   {W=7 [10,20], W=8 [22,30], R->7 [32,40]}
+/// —— R 单独看相对初值 0 就违规，但 {R, W=7} 线性一致（写 7 后读到 7），
+/// 而两次写不重叠迫使 R 必须读到 8。这才是要保留的 bug 语义。
+fn bug_a_history() -> History {
+  hist_of([
+    mk_op(0, 0, Cas(1, 2), Bool(true), 2L, 5L),
+    mk_op(1, 1, Write(7), Ok, 10L, 20L),
+    mk_op(2, 2, Write(8), Ok, 22L, 30L),
+    mk_op(3, 3, Read, Value(7), 32L, 40L),
+    mk_op(4, 0, Read, Value(9), 42L, 50L),
+    mk_op(5, 1, Cas(2, 3), Bool(true), 50L, 55L),
+    mk_op(6, 2, Read, Value(4), 56L, 60L),
+    mk_op(7, 3, Write(0), Ok, 60L, 70L),
+  ])
+}
+
+///|
+test "minimize 拒绝单操作退化解（bugA 8 → 1 回归）" {
+  let h = bug_a_history()
+  // 前提：check 给出的种子确实只有 1 条操作（旧实现正是被它带偏的）
+  match check_with(h, register_model(), CheckConfig::default()) {
+    Violation(v) => assert_eq(v.ops.length(), 1)
+    _ => inspect("<应当 Violation>", content="")
+  }
+  let v = minimize(h, reg(), CheckConfig::default())
+  // 下界与可解释性都是硬约束，不是建议
+  assert_true(v.ops.length() >= MIN_WITNESS)
+  assert_true(
+    explainable(v.ops, register_model(), CheckConfig::default(), Expl::new()),
+  )
+  // 见证本身必须仍然违规（不能靠砍掉肇事操作来「满足」守卫）
+  let still = check_with(
+    hist_of(v.ops),
+    register_model(),
+    CheckConfig::default(),
+  )
+  assert_true(still is Violation(_))
+}
+
+///|
+/// 守卫性质：四模型下的「初始状态自相矛盾」历史。
+///
+/// 最小化产物必须**要么**满足「长度 >= MIN_WITNESS 且可解释 且仍违规」，
+/// **要么**如实报告「找不到可解释的最小见证」（原样返回整份历史 + 说明），
+/// 二者之外的任何输出（尤其是静默的单操作退化解）都是缺陷。
+test "minimize 守卫性质：四模型都不输出退化解" {
+  let cases : Array[(AnyModel, History)] = [
+    (reg(), hist_of([mk_op(0, 0, Cas(1, 2), Bool(true), 2L, 5L)])),
+    (Counter(counter_model()), hist_of([mk_op(0, 0, Read, Value(5), 0L, 10L)])),
+    (st(), hist_of([mk_op(0, 0, Read, Value(3), 0L, 10L)])),
+    (Queue(queue_model()), hist_of([mk_op(0, 0, Pop, Bool(true), 0L, 10L)])),
+  ]
+  for entry in cases {
+    let (m, h) = entry
+    // 前提：这些历史确实违规
+    let outcome = check_with(h, m, CheckConfig::default())
+    assert_true(outcome is Violation(_))
+    let v = minimize(h, m, CheckConfig::default())
+    if v.ops.length() == 0 {
+      inspect("<违规历史不应返回空见证>", content="")
+    } else if v.explanation.contains("可解释") {
+      // 如实报告分支：必须原样返回整份历史，且它仍然违规
+      assert_eq(v.ops.length(), h.length())
+      let still = check_with(hist_of(v.ops), m, CheckConfig::default())
+      assert_true(still is Violation(_))
+    } else {
+      assert_true(v.ops.length() >= MIN_WITNESS)
+      assert_true(explainable(v.ops, m, CheckConfig::default(), Expl::new()))
+      let still = check_with(hist_of(v.ops), m, CheckConfig::default())
+      assert_true(still is Violation(_))
+    }
+  }
+}
+
+///|
+/// 新增可空入口：确实没有合格见证时必须返回 None，
+/// 同时 `minimize` 必须原样返回整份历史并如实说明（不伪装成最小反例）。
+test "minimize_witness 无可解释见证时返回 None" {
+  let h = hist_of([mk_op(0, 0, Cas(1, 2), Bool(true), 2L, 5L)])
+  match minimize_witness(h, reg(), CheckConfig::default()) {
+    None => ()
+    Some(_) => inspect("<期望 None>", content="")
+  }
+  let v = minimize(h, reg(), CheckConfig::default())
+  assert_eq(v.ops.length(), h.length())
+  assert_true(v.explanation.contains("可解释"))
+  // 无论如何都必须仍然违规：不许靠「返回空/一致子集」蒙混过关
+  assert_true(
+    check_with(hist_of(v.ops), register_model(), CheckConfig::default())
+    is Violation(_),
+  )
+}
+
+///|
+/// 守卫性质（四模型 × 多 seed）：只要最小见证存在，它就必须同时满足
+/// 「长度 >= MIN_WITNESS、仍可复现违规、可解释」；不存在就返回 None。
+/// 这条性质与具体模型无关——四种模型都必须成立。
+test "minimal_witness 守卫性质：四模型 × 多 seed" {
+  let models : Array[AnyModel] = [
+    reg(),
+    Counter(counter_model()),
+    st(),
+    Queue(queue_model()),
+  ]
+  for m in models {
+    for seed in [1, 2, 3, 7, 11] {
+      let cfg = GenConfig::{
+        processes: 3,
+        ops_per_process: 4,
+        seed,
+        concurrency: 0.5,
+      }
+      let histories = [
+        generate_random(m, cfg),
+        inject_violation(generate_consistent(m, cfg), m, seed),
+      ]
+      for h in histories {
+        match check_with(h, m, CheckConfig::default()) {
+          Violation(v) =>
+            match
+              minimal_witness(
+                v.ops,
+                h.operations,
+                m,
+                CheckConfig::default(),
+                MIN_WITNESS,
+                Expl::new(),
+              ) {
+              Some(w) => {
+                assert_true(w.length() >= MIN_WITNESS)
+                assert_true(
+                  check_with(hist_of(w), m, CheckConfig::default())
+                  is Violation(_),
+                )
+                assert_true(
+                  explainable(w, m, CheckConfig::default(), Expl::new()),
+                )
+              }
+              None => ()
+            }
+          _ => ()
+        }
+      }
+    }
+  }
+}

@@ -27,6 +27,19 @@
 //
 // 想拿「纯」ddmin 结果（可能只剩 1 条）时调用 minimize_raw。
 //
+// ── 最终返回值的硬约束（LC-1）────────────────────────────────────────
+// `length >= min_witness` 与 `explainable` 必须同时对**返回的那个数组**
+// 成立（判据集中在 `witness_ok`）。旧实现只在「候选删除」时用这两条，
+// 兜底分支直接把 `check` 给的种子原样返回——而种子可能只有一条操作
+// （更糟的是那条操作相对初始状态就不可能成立）。那等于把「数据自相矛盾」
+// 伪装成「最小并发反例」，正是本文件开头要拦的退化解。
+//
+// 现在的行为：
+//   · 种子不合格 → 在整份历史里重新找合格见证（ddmin 只能删，得换更大的
+//     起点，或按规模枚举 2/3 元子集）；
+//   · 确实不存在合格见证 → `minimal_witness` 返回 None，`minimize` 原样
+//     返回整份历史并如实说明。不输出退化解，也不 panic 到用户面前。
+//
 // ── 判定原则 ──────────────────────────────────────────────────────────
 // 删操作会放松时间约束、可能让历史重新变合法，所以每一步「是否仍违规」
 // 都必须用检查器实测确认，绝不靠推理猜。
@@ -329,7 +342,150 @@ pub fn[M : Model] ddmin(
 }
 
 ///|
-/// 带守卫的压缩：压不动就原样返回种子
+/// 见证合格判据（唯一口径）：够大 + 仍违规 + 可解释。
+///
+/// 三道约束必须同时对**最终返回值**成立，而不只是对候选删除成立：
+/// - `length >= min_witness`：下界（`MIN_WITNESS` 默认 2）
+/// - `still_violates`：删操作不得让历史变回线性一致
+/// - `explainable`：孤立非法的操作必须有同伴解释它的来源，否则 bug 语义变了
+fn[M : Model] witness_ok(
+  cand : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+  expl : Expl,
+) -> Bool {
+  if cand.length() < min_witness {
+    return false
+  }
+  if !still_violates(cand, model, config) {
+    return false
+  }
+  explainable(cand, model, config, expl)
+}
+
+///|
+/// 按字典序枚举 `pool` 的全部 `size` 元子集，返回第一个合格见证。
+///
+/// `cap` 是 pool 规模上限：超过就放弃。这条兜底路径是组合枚举
+/// （2 元 O(n²)、3 元 O(n³)，每次判定都要跑一遍检查器），只用于
+/// 「ddmin 从种子出发已经救不回来」的少量历史；大历史优先信任 ddmin。
+fn[M : Model] first_ok_subset(
+  pool : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+  expl : Expl,
+  size : Int32,
+  cap : Int32,
+) -> Array[Operation]? {
+  let n = pool.length()
+  if size <= 0 || size > n || n > cap {
+    return None
+  }
+  let idx : Array[Int32] = []
+  let mut i = 0
+  while i < size {
+    idx.push(i)
+    i = i + 1
+  }
+  let mut scanning = true
+  while scanning {
+    let cand : Array[Operation] = []
+    for k in idx {
+      cand.push(pool[k])
+    }
+    if witness_ok(cand, model, config, min_witness, expl) {
+      return Some(cand)
+    }
+    // 推进到下一个组合（字典序，保证确定性）
+    let mut slot = size - 1
+    let mut advanced = false
+    while slot >= 0 && !advanced {
+      if idx[slot] < n - size + slot {
+        idx[slot] = idx[slot] + 1
+        let mut rest = slot + 1
+        while rest < size {
+          idx[rest] = idx[rest - 1] + 1
+          rest = rest + 1
+        }
+        advanced = true
+      }
+      slot = slot - 1
+    }
+    if !advanced {
+      scanning = false
+    }
+  }
+  None
+}
+
+///|
+/// 在 `pool` 里寻找满足下界 + 仍违规 + 可解释的最小见证（`None` = 找不到）。
+///
+/// 搜索顺序（每一步都以 `witness_ok` 为唯一判据）：
+/// 1. 对 `check` 给出的种子做带守卫的 ddmin —— 常见路径，种子本来就合格；
+/// 2. 按**规模从小到大**枚举 2 元、3 元子集 —— 种子不合格时，全局最小见证
+///    往往就在这两层（例如「写先完成却读到旧值」的经典反例就是一对）；
+/// 3. 以整份历史为起点再跑一次 ddmin —— ddmin 只能删，从种子出发无法
+///    「长大」成可解释的见证，换一个更大的起点才有机会；
+/// 4. 全部失败返回 `None`：**如实报告**，绝不输出退化解。
+///
+/// 第 1 步覆盖了绝大多数历史，因此正常调用不会触发组合枚举。
+pub fn[M : Model] minimal_witness(
+  seed : Array[Operation],
+  pool : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+  expl : Expl,
+) -> Array[Operation]? {
+  let from_seed = ddmin_bounded(
+    seed,
+    model,
+    config,
+    200,
+    min_witness,
+    Some(expl),
+  )
+  if witness_ok(from_seed, model, config, min_witness, expl) {
+    return Some(from_seed)
+  }
+  if min_witness <= 2 {
+    match first_ok_subset(pool, model, config, min_witness, expl, 2, 48) {
+      Some(found) => return Some(found)
+      None => ()
+    }
+  }
+  if min_witness <= 3 {
+    match first_ok_subset(pool, model, config, min_witness, expl, 3, 14) {
+      Some(found) => return Some(found)
+      None => ()
+    }
+  }
+  let from_pool = ddmin_bounded(
+    pool,
+    model,
+    config,
+    200,
+    min_witness,
+    Some(expl),
+  )
+  if witness_ok(from_pool, model, config, min_witness, expl) {
+    return Some(from_pool)
+  }
+  None
+}
+
+///|
+/// 带守卫的压缩（**只从 seed 出发**，不做全历史搜索）。
+///
+/// 返回空数组表示「seed 不满足下界/可解释性约束，且压缩不出合格结果」——
+/// 这是明确的「没有可输出见证」信号，调用方必须处理，不能当见证使用。
+/// 需要「在整份历史里重新找见证」时用 `minimal_witness`。
+///
+/// 旧实现的三处责任在这里被收敛成一条：`explainable` 先于大小、
+/// `min_witness` 约束**最终返回值**、不合格时不再静默返回种子。
 pub fn[M : Model] shrink(
   seed : Array[Operation],
   model : M,
@@ -337,19 +493,9 @@ pub fn[M : Model] shrink(
   min_witness : Int32,
   expl : Expl,
 ) -> Array[Operation] {
-  let result = ddmin_bounded(seed, model, config, 200, min_witness, Some(expl))
-  let big_enough = result.length() >= min_witness
-  if big_enough && still_violates(result, model, config) {
-    result
-    // 原始历史本身就小于下界（例如只有一条不可解释的读），不做裁剪。
-    // 但**兜底前必须确认种子本身仍违规**（L2 加固）：ddmin 的输入来自
-    // check 的反例，若上游证据链有缺陷（如 ops 里不含肇事操作），seed
-    // 可能线性一致 —— 此时静默返回它会产生一个 check 都否定的「见证」。
-    // 宁可 panic 也不输出自相矛盾的结果。
-  } else if still_violates(seed, model, config) {
-    seed.copy()
-  } else {
-    abort("minimize: seed history is linearizable; witness chain is broken")
+  match minimal_witness(seed, seed, model, config, min_witness, expl) {
+    Some(found) => found
+    None => []
   }
 }
 
@@ -393,12 +539,103 @@ fn no_witness(ops : Array[Operation], text : String) -> Violation {
 }
 
 ///|
+/// 「找不到可解释的最小见证」的如实说明（库与 CLI 共用）。
+///
+/// 这条文本存在的意义：当历史本身确实违规、但没有任何满足下界与
+/// 可解释性约束的见证时，工具必须**说清这一点**，而不是把一个退化的
+/// 单操作子集伪装成最小反例（那会把「数据自相矛盾」报成「并发竞态」）。
+pub fn no_explainable_witness_text(
+  total : Int32,
+  min_witness : Int32,
+) -> String {
+  "该历史确实非线性一致，但找不到可输出的最小见证：在「至少 " +
+  min_witness.to_string() +
+  " 个操作 + 可解释性」约束下，没有任何子集同时满足「仍可复现违规」与「孤立非法的操作有同伴解释来源」。" +
+  "原样返回全部 " +
+  total.to_string() +
+  " 个操作供人工查看——这通常意味着历史数据自相矛盾（例如初值 0 上记录了 CAS 返回 true），" +
+  "而不是并发交错导致的竞态。"
+}
+
+///|
 /// 取整份历史作为种子（检查器可能已给出子集）
 fn seed_of(history : History, v : Violation) -> Array[Operation] {
   if v.ops.length() > 0 {
     v.ops.copy()
   } else {
     history.operations.copy()
+  }
+}
+
+///|
+/// 违规见证的可空版本：`None` = 历史违规，但不存在满足下界与可解释性的见证。
+///
+/// `min_witness <= 0` 时走**无守卫**路径（纯 ddmin，允许压到 1 条操作），
+/// 保留 `minimize_raw` 的既有语义（教学 / 对照用）。
+fn[M : Model] minimize_opt(
+  history : History,
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+) -> Violation? {
+  let original_n = history.length()
+  let outcome = check_with(history, model, config)
+  match outcome {
+    Linearizable =>
+      Some(Violation::{
+        ops: [],
+        depth: 0,
+        explanation: "历史线性一致，不存在反例。",
+      })
+    Unknown(reason) =>
+      Some(
+        no_witness(
+          history.operations,
+          "检查未能给出结论（\{reason}），无法最小化；返回全部操作供人工查看。",
+        ),
+      )
+    Violation(v) => {
+      let seed = seed_of(history, v)
+      if min_witness <= 0 {
+        // 纯 ddmin：显式请求「不要守卫」，允许单个操作作见证。
+        let minimal = ddmin_bounded(seed, model, config, 200, 0, None)
+        let depth = match probe_ops(minimal, model, config) {
+          Violation(v2) => v2.depth
+          _ => v.depth
+        }
+        Some(Violation::{
+          ops: sort_ops_by_id(minimal),
+          depth,
+          explanation: explain_minimal(original_n, minimal, "delta debugging"),
+        })
+      } else {
+        let expl = Expl::new()
+        match
+          minimal_witness(
+            seed,
+            history.operations,
+            model,
+            config,
+            min_witness,
+            expl,
+          ) {
+          Some(minimal) => {
+            let depth = match probe_ops(minimal, model, config) {
+              Violation(v2) => v2.depth
+              _ => v.depth
+            }
+            Some(Violation::{
+              ops: sort_ops_by_id(minimal),
+              depth,
+              explanation: explain_minimal(
+                original_n, minimal, "delta debugging",
+              ),
+            })
+          }
+          None => None
+        }
+      }
+    }
   }
 }
 
@@ -413,70 +650,46 @@ pub fn[M : Model] minimize_with(
 }
 
 ///|
-/// 同上，可指定见证下界（0 表示允许压到单个操作）
+/// 同上，可指定见证下界（`<= 0` 表示允许压到单个操作）
 pub fn[M : Model] minimize_with_bound(
   history : History,
   model : M,
   config : CheckConfig,
   min_witness : Int32,
 ) -> Violation {
-  let original_n = history.length()
-  let outcome = check_with(history, model, config)
-  match outcome {
-    Linearizable =>
-      Violation::{
-        ops: [],
-        depth: 0,
-        explanation: "历史线性一致，不存在反例。",
-      }
-    Unknown(reason) =>
+  match minimize_opt(history, model, config, min_witness) {
+    Some(v) => v
+    None =>
       no_witness(
         history.operations,
-        "检查未能给出结论（\{reason}），无法最小化；返回全部操作供人工查看。",
+        no_explainable_witness_text(history.length(), min_witness),
       )
-    Violation(v) => {
-      let expl = Expl::new()
-      let minimal = shrink(
-        seed_of(history, v),
-        model,
-        config,
-        min_witness,
-        expl,
-      )
-      let depth = match probe_ops(minimal, model, config) {
-        Violation(v2) => v2.depth
-        _ => v.depth
-      }
-      Violation::{
-        ops: sort_ops_by_id(minimal),
-        depth,
-        explanation: explain_minimal(original_n, minimal, "delta debugging"),
-      }
-    }
   }
 }
 
 ///|
-/// 按进程分组的最小化：先整进程砍，再逐操作砍（常能显著缩小）
-pub fn[M : Model] minimize_by_process_with(
+/// 按进程分组 + 逐操作的最小化（泛型版，`None` = 找不到合格见证）
+pub fn[M : Model] minimize_by_process_opt(
   history : History,
   model : M,
   min_witness : Int32,
-) -> Violation {
+) -> Violation? {
   let config = CheckConfig::default()
   let original_n = history.length()
   let outcome = check_with(history, model, config)
   match outcome {
     Linearizable =>
-      Violation::{
+      Some(Violation::{
         ops: [],
         depth: 0,
         explanation: "历史线性一致，不存在反例。",
-      }
+      })
     Unknown(reason) =>
-      no_witness(
-        history.operations,
-        "检查未能给出结论（\{reason}），无法最小化；返回全部操作供人工查看。",
+      Some(
+        no_witness(
+          history.operations,
+          "检查未能给出结论（\{reason}），无法最小化；返回全部操作供人工查看。",
+        ),
       )
     Violation(v) => {
       let seed = seed_of(history, v)
@@ -515,20 +728,49 @@ pub fn[M : Model] minimize_by_process_with(
           current = rest
         }
       }
-      // 第三步：逐操作细粒度砍
-      let minimal = shrink(current, model, config, min_witness, expl)
-      let depth = match probe_ops(minimal, model, config) {
-        Violation(v2) => v2.depth
-        _ => v.depth
-      }
-      Violation::{
-        ops: sort_ops_by_id(minimal),
-        depth,
-        explanation: explain_minimal(
-          original_n, minimal, "按进程 + 逐操作最小化",
-        ),
+      // 第三步：逐操作细粒度砍（种子不合格时以整份历史为起点重新找见证）
+      let witness = minimal_witness(
+        current,
+        history.operations,
+        model,
+        config,
+        min_witness,
+        expl,
+      )
+      match witness {
+        None => None
+        Some(minimal) => {
+          let depth = match probe_ops(minimal, model, config) {
+            Violation(v2) => v2.depth
+            _ => v.depth
+          }
+          Some(Violation::{
+            ops: sort_ops_by_id(minimal),
+            depth,
+            explanation: explain_minimal(
+              original_n, minimal, "按进程 + 逐操作最小化",
+            ),
+          })
+        }
       }
     }
+  }
+}
+
+///|
+/// 按进程分组的最小化：先整进程砍，再逐操作砍（常能显著缩小）
+pub fn[M : Model] minimize_by_process_with(
+  history : History,
+  model : M,
+  min_witness : Int32,
+) -> Violation {
+  match minimize_by_process_opt(history, model, min_witness) {
+    Some(v) => v
+    None =>
+      no_witness(
+        history.operations,
+        no_explainable_witness_text(history.length(), min_witness),
+      )
   }
 }
 
@@ -540,6 +782,18 @@ pub fn minimize(
   config : CheckConfig,
 ) -> Violation {
   minimize_with(history, model, config)
+}
+
+///|
+/// 最小见证（可空入口）：`None` = 历史违规但不存在满足下界与可解释性的见证。
+///
+/// CLI 用它区分「最小化：N → M」与「N 个操作里找不到可输出的见证」。
+pub fn minimize_witness(
+  history : History,
+  model : AnyModel,
+  config : CheckConfig,
+) -> Violation? {
+  minimize_opt(history, model, config, MIN_WITNESS)
 }
 
 ///|

@@ -376,7 +376,31 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     max_states: 200_000,
     allow_unknown_results: false,
   }
-  let v = @lib.minimize(history, model, cfg)
+  // 用可空入口明确区分「最小化：N → M」与「找不到可输出的见证」。
+  // 后者退出码仍是 1：历史确实违规是一个有效结论，只是没有满足
+  // 「下界 + 可解释性」的证据子集可给——不能静默把退化解（1 条操作）
+  // 当作最小反例输出，也不能降级成 0/3。
+  let v = match @lib.minimize_witness(history, model, cfg) {
+    Some(w) => w
+    None => {
+      if cli.json {
+        println(
+          "{\"verdict\":\"non-linearizable\",\"total\":\{original_n},\"witness\":[],\"reason\":\"no-explainable-witness\"}",
+        )
+      } else {
+        println("✗ NON-LINEARIZABLE")
+        println("")
+        println(
+          "  最小化：\{original_n} 个操作里找不到可输出的最小见证（历史本身确实违规）。",
+        )
+        println("")
+        println(
+          "  \{@lib.no_explainable_witness_text(original_n, @lib.MIN_WITNESS)}",
+        )
+      }
+      return EXIT_VIOLATION
+    }
+  }
   if v.ops.length() == 0 {
     if cli.json {
       println("{\"verdict\":\"linearizable\",\"total\":\{original_n}}")

@@ -184,9 +184,39 @@ pub fn minimize(history : History, model : Model, config : CheckConfig) -> Viola
 
 /// 按进程分组的最小化（常能显著缩小）
 pub fn minimize_by_process(history : History, model : Model) -> Violation
+
+/// 同上，可空入口：None = 历史违规，但不存在满足下界与可解释性的见证
+pub fn minimize_witness(history : History, model : AnyModel, config : CheckConfig) -> Violation?
+pub fn[M : Model] minimal_witness(
+  seed : Array[Operation],
+  pool : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+  expl : Expl,
+) -> Array[Operation]?
 ```
 
 要求：最小化后仍必须违规（用 `check` 验证），且操作数尽量少。
+
+**最终返回值的三重约束**（`witness_ok`，缺一不可）：
+
+1. `ops.length() >= min_witness`（默认 `MIN_WITNESS = 2`）
+2. `check_with(ops)` 仍是 `Violation`
+3. `explainable(ops, ...)`：每个「孤立非法」的操作都有同伴解释它的来源
+
+三条约束对**返回的数组本身**生效，而不只是对中途的候选删除生效：
+`check` 给出的种子本身可能只有一条操作（例如初值 0 上记录
+`Cas(1->2) -> Bool(true)`，属于历史数据自相矛盾），此时最小化会改在整份
+历史里重新找合格见证。确实找不到时，`minimal_witness` / `minimize_witness`
+返回 `None`，`minimize` 原样返回整份历史并用
+`no_explainable_witness_text(total, min_witness)` 说明原因——不输出退化解，
+也不 panic。CLI 在 `--json` 下把它标记为
+`{"verdict":"non-linearizable","witness":[],"reason":"no-explainable-witness"}`，
+退出码仍为 `1`（历史确实违规是一个有效结论）。
+
+`minimize_raw` 是显式的不设防入口（`min_witness = 0`），允许压到单条操作，
+仅供对照与教学使用。
 
 ## 5. 历史生成 `src/generate.mbt`
 
