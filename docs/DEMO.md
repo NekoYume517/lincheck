@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 172 个测试
+moon test      # 178 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 172, passed: 172, failed: 0.`
+预期：`Total tests: 178, passed: 178, failed: 0.`
 
 ## 二、看核心判定
 
