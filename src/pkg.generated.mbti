@@ -1,14 +1,14 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "moonbit-hack/lincheck/src"
+package "NekoYume517/lincheck/src"
 
 import {
   "moonbitlang/core/debug",
 }
 
 // Values
-pub const MIN_WITNESS : Int = 2
+pub const MIN_WITNESS : Int32 = 2
 
-pub fn[M : Model] candidate_accepted(Array[Operation], Array[Operation], M, CheckConfig, Int, Expl?) -> Bool
+pub fn[M : Model] candidate_accepted(Array[Operation], Array[Operation], M, CheckConfig, Int32, Expl?) -> Bool
 
 pub fn check(History, AnyModel, CheckConfig) -> CheckOutcome
 
@@ -20,15 +20,19 @@ pub fn[M : Model] check_with(History, M, CheckConfig) -> CheckOutcome
 
 pub fn[M : Model] check_with_stats(History, M, CheckConfig) -> (CheckOutcome, CheckStats)
 
-pub fn clip(String, Int) -> String
+pub fn clip(String, Int32) -> String
+
+pub fn compare_ops(Operation, Operation) -> Int32
+
+pub fn compare_ops_by_id(Operation, Operation) -> Int32
 
 pub fn concurrent(Operation, Operation) -> Bool
 
 pub fn counter_model() -> CounterModel
 
-pub fn[M : Model] ddmin(Array[Operation], M, CheckConfig, Int) -> Array[Operation]
+pub fn[M : Model] ddmin(Array[Operation], M, CheckConfig, Int32) -> Array[Operation]
 
-pub fn[M : Model] ddmin_bounded(Array[Operation], M, CheckConfig, Int, Int, Expl?) -> Array[Operation]
+pub fn[M : Model] ddmin_bounded(Array[Operation], M, CheckConfig, Int32, Int32, Expl?) -> Array[Operation]
 
 pub fn[M : Model] explainable(Array[Operation], M, CheckConfig, Expl) -> Bool
 
@@ -44,25 +48,35 @@ pub fn[M : Model] generate_random(M, GenConfig) -> History
 
 pub fn happens_before(Operation, Operation) -> Bool
 
-pub fn inject_violation(History, AnyModel, Int) -> History
+pub fn inject_violation(History, AnyModel, Int32) -> History
 
 pub fn kind_label(OpKind) -> String
+
+pub fn[M : Model] minimal_witness(Array[Operation], Array[Operation], M, CheckConfig, Int32, Expl) -> Array[Operation]?
 
 pub fn minimize(History, AnyModel, CheckConfig) -> Violation
 
 pub fn minimize_by_process(History, AnyModel) -> Violation
 
-pub fn[M : Model] minimize_by_process_with(History, M, Int) -> Violation
+pub fn[M : Model] minimize_by_process_opt(History, M, Int32) -> Violation?
+
+pub fn[M : Model] minimize_by_process_with(History, M, Int32) -> Violation
 
 pub fn minimize_raw(History, AnyModel, CheckConfig) -> Violation
 
 pub fn[M : Model] minimize_with(History, M, CheckConfig) -> Violation
 
-pub fn[M : Model] minimize_with_bound(History, M, CheckConfig, Int) -> Violation
+pub fn[M : Model] minimize_with_bound(History, M, CheckConfig, Int32) -> Violation
 
-pub fn model_by_name(String) -> AnyModel
+pub fn minimize_witness(History, AnyModel, CheckConfig) -> Violation?
+
+pub fn model_by_name(String) -> AnyModel?
 
 pub fn model_names() -> Array[String]
+
+pub fn model_or_default(String) -> AnyModel
+
+pub fn no_explainable_witness_text(Int32, Int32) -> String
 
 pub fn op_line(Operation) -> String
 
@@ -72,45 +86,49 @@ pub fn ops_to_history(Array[Operation]) -> History
 
 pub fn order_facts(Array[Operation]) -> String
 
-pub fn pad_right(String, Int) -> String
+pub fn pad_right(String, Int32) -> String
 
-pub fn poly_hash(Array[Int]) -> Int
+pub fn pair_key(Int32, Int32) -> Int64
+
+pub fn poly_hash(Array[Int32]) -> Int32
 
 pub fn[M : Model] probe_ops(Array[Operation], M, CheckConfig) -> CheckOutcome
 
-pub fn process_ids(History) -> Array[Int]
+pub fn process_ids(History) -> Array[Int32]
 
 pub fn queue_model() -> QueueModel
 
 pub fn register_model() -> RegisterModel
 
-pub fn remove_chunk(Array[Operation], Int, Int) -> Array[Operation]
+pub fn remove_chunk(Array[Operation], Int32, Int32) -> Array[Operation]
 
 pub fn render_timeline(History) -> String
 
 pub fn render_violation(Violation, History) -> String
 
-pub fn repeat_char(Char, Int) -> String
+pub fn repeat_char(Char, Int32) -> String
 
 pub fn result_label(OpResult) -> String
 
 pub fn set_model() -> SetModel
 
-pub fn[M : Model] shrink(Array[Operation], M, CheckConfig, Int, Expl) -> Array[Operation]
+pub fn[M : Model] shrink(Array[Operation], M, CheckConfig, Int32, Expl) -> Array[Operation]
 
 pub fn sort_ops_by_id(Array[Operation]) -> Array[Operation]
 
-pub fn state_copy(Array[Int]) -> Array[Int]
+pub fn state_copy(Array[Int32]) -> Array[Int32]
 
-pub fn state_to_string(Array[Int]) -> String
+pub fn state_to_string(Array[Int32]) -> String
 
-pub fn states_equal(Array[Int], Array[Int]) -> Bool
+pub fn states_equal(Array[Int32], Array[Int32]) -> Bool
 
 pub fn[M : Model] still_violates(Array[Operation], M, CheckConfig) -> Bool
 
+pub fn violation_reason(Violation) -> String
+
 // Errors
 pub(all) suberror HistoryError {
-  BadLine(Int, String)
+  BadLine(Int32, String)
 } derive(@debug.Debug)
 
 // Types and methods
@@ -123,8 +141,8 @@ pub(all) enum AnyModel {
 pub impl Model for AnyModel
 
 pub(all) struct CheckConfig {
-  time_budget_ms : Int
-  max_states : Int
+  time_budget_ms : Int32
+  max_states : Int32
   allow_unknown_results : Bool
 } derive(@debug.Debug)
 pub fn CheckConfig::default() -> Self
@@ -136,9 +154,9 @@ pub(all) enum CheckOutcome {
 } derive(@debug.Debug)
 
 pub(all) struct CheckStats {
-  explored : Int
-  cache_hits : Int
-  cache_size : Int
+  explored : Int32
+  cache_hits : Int32
+  cache_size : Int32
   timed_out : Bool
 } derive(@debug.Debug)
 
@@ -147,56 +165,56 @@ pub(all) struct CounterModel {
 pub impl Model for CounterModel
 
 pub(all) struct Expl {
-  illegal : Map[Int, Bool]
-  pairs : Map[Int, Bool]
+  illegal : Map[String, Bool]
+  pairs : Map[String, Bool]
 }
 pub fn[M : Model] Expl::is_illegal(Self, Operation, M, CheckConfig) -> Bool
 pub fn Expl::new() -> Self
 pub fn[M : Model] Expl::pair_explains(Self, Operation, Operation, M, CheckConfig) -> Bool
 
 pub(all) struct GenConfig {
-  processes : Int
-  ops_per_process : Int
-  seed : Int
+  processes : Int32
+  ops_per_process : Int32
+  seed : Int32
   concurrency : Double
 }
 pub fn GenConfig::default() -> Self
-pub fn GenConfig::new(Int, Int, Int, Double) -> Self
+pub fn GenConfig::new(Int32, Int32, Int32, Double) -> Self
 
 pub(all) struct History {
   operations : Array[Operation]
 }
 pub fn History::add(Self, Operation) -> Unit
 pub fn History::from_jsonl(StringView) -> Result[Self, HistoryError] raise
-pub fn History::length(Self) -> Int
+pub fn History::length(Self) -> Int32
 pub fn History::new() -> Self
 pub fn History::sort_by_start(Self) -> Self
 pub fn History::to_jsonl(Self) -> String
 
 pub(all) enum OpKind {
-  Write(Int)
+  Write(Int32)
   Read
-  Cas(Int, Int)
-  Append(Int)
+  Cas(Int32, Int32)
+  Append(Int32)
   Pop
 } derive(Eq, @debug.Debug)
 
 pub(all) enum OpResult {
   Ok
-  Value(Int)
+  Value(Int32)
   Bool(Bool)
   Empty
   Nil
 } derive(Eq, @debug.Debug)
 
 pub(all) struct Operation {
-  id : Int
-  process : Int
+  id : Int32
+  process : Int32
   kind : OpKind
   result : OpResult
   start : Int64
   end : Int64
-} derive(@debug.Debug)
+} derive(Eq, @debug.Debug)
 
 pub(all) struct QueueModel {
 } derive(@debug.Debug)
@@ -207,12 +225,12 @@ pub(all) struct RegisterModel {
 pub impl Model for RegisterModel
 
 pub(all) struct Rng {
-  mut state : Int
+  mut state : Int32
 }
-pub fn Rng::below(Self, Int) -> Int
+pub fn Rng::below(Self, Int32) -> Int32
 pub fn Rng::chance(Self, Double) -> Bool
-pub fn Rng::new(Int) -> Self
-pub fn Rng::next(Self) -> Int
+pub fn Rng::new(Int32) -> Self
+pub fn Rng::next(Self) -> Int32
 pub fn Rng::unit(Self) -> Double
 
 type RowLayout
@@ -225,21 +243,21 @@ pub impl Model for SetModel
 
 pub(all) struct Violation {
   ops : Array[Operation]
-  depth : Int
+  depth : Int32
   explanation : String
 } derive(@debug.Debug)
 
 // Type aliases
-pub type OpId = Int
+pub type OpId = Int32
 
-pub type State = Array[Int]
+pub type State = Array[Int32]
 
 // Traits
 pub trait Model {
   fn name(Self) -> String
-  fn init(Self) -> Array[Int]
-  fn apply(Self, Array[Int], OpKind) -> (Array[Int], OpResult)?
-  fn accepts(Self, Array[Int], OpKind, OpResult, OpResult) -> Bool
-  fn state_eq(Self, Array[Int], Array[Int]) -> Bool
-  fn state_hash(Self, Array[Int]) -> Int
+  fn init(Self) -> Array[Int32]
+  fn apply(Self, Array[Int32], OpKind) -> (Array[Int32], OpResult)?
+  fn accepts(Self, Array[Int32], OpKind, OpResult, OpResult) -> Bool
+  fn state_eq(Self, Array[Int32], Array[Int32]) -> Bool
+  fn state_hash(Self, Array[Int32]) -> Int32
 }

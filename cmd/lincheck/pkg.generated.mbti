@@ -1,9 +1,14 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "moonbit-hack/lincheck/cmd/lincheck"
+package "NekoYume517/lincheck/cmd/lincheck"
 
 // Values
+pub fn parse_double_arg(String) -> Double?
+
+pub fn parse_int_arg(String) -> Int32?
 
 // Errors
+type DataFailure
+
 type Failure
 
 // Types and methods
