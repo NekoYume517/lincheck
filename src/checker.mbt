@@ -208,16 +208,7 @@ fn collect_candidates(
       candidates.push(i)
     }
   }
-  candidates.sort_by(fn(a, b) {
-    let ds = ops[a].start - ops[b].start
-    if ds < 0L {
-      -1
-    } else if ds > 0L {
-      1
-    } else {
-      ops[a].id - ops[b].id
-    }
-  })
+  candidates.sort_by(fn(a, b) { compare_ops(ops[a], ops[b]) })
   candidates
 }
 
@@ -618,7 +609,10 @@ fn build_violation(
   //
   // MoonBit 的 Array::sort_by 是稳定排序，所以同 id 的条目保持
   // best_prefix 里的原始相对顺序，输出可复现。
-  subset.sort_by(fn(a, b) { a.id - b.id })
+  //
+  // 比较器用 compare_ops_by_id（显式三分支），不用 `a.id - b.id`：
+  // id 允许完整 Int32 范围，减法在极值处回绕会破坏升序。
+  subset.sort_by(compare_ops_by_id)
 
   // 兜底：连一步都没走通（例如第一个操作就不合法）时报告全部操作，
   // 否则上游拿不到任何证据。

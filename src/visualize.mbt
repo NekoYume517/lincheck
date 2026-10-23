@@ -177,7 +177,7 @@ fn render_ops(ops : Array[Operation], scale : Int32) -> String {
     }
   }
   procs.sort()
-  // 每个进程按 (start, id) 排序
+  // 每个进程按 (start, id) 排序（compare_ops 用显式三分支，避免减法溢出）
   let rows : Array[RowLayout] = []
   let mut max_w = 1
   for p in procs {
@@ -187,15 +187,7 @@ fn render_ops(ops : Array[Operation], scale : Int32) -> String {
         mine.push(op)
       }
     }
-    mine.sort_by(fn(a, b) {
-      if a.start == b.start {
-        a.id - b.id
-      } else if a.start < b.start {
-        -1
-      } else {
-        1
-      }
-    })
+    mine.sort_by(compare_ops)
     let layout = layout_row(mine, tmin, span, scale)
     if layout.width > max_w {
       max_w = layout.width

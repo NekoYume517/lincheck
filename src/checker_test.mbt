@@ -760,6 +760,45 @@ test "LC-2: 真并发违规的解释不标注数据不一致" {
 }
 
 // ============================================================
+// 顺带修复：排序比较器不得用减法（Int/Int64 溢出会破坏全序）
+// ============================================================
+//
+// `id` 允许完整 Int32 范围（audit2_test 锁定边界值），`start` 允许完整
+// Int64 范围。用 `a.id - b.id` 当比较结果时，2147483647 - (-2147483648)
+// 回绕成 -1，全序被破坏：`sort_ops_by_id` 不再升序，见证子集也不再满足
+// API 承诺的「按 id 升序」，候选首选项随之内翻。
+
+///|
+test "极端 id 下 sort_ops_by_id 与见证仍按 id 升序" {
+  // 1) 直接覆盖排序辅助函数
+  let ops = [
+    cop(2147483647, 0, Write(1), Ok, 0L, 10L),
+    cop(-2147483648, 1, Write(2), Ok, 12L, 20L),
+  ]
+  let s = sort_ops_by_id(ops)
+  inspect(s[0].id, content="-2147483648")
+  inspect(s[1].id, content="2147483647")
+
+  // 2) 见证子集必须按 id 升序（API.md 承诺）
+  let h = chist([
+    cop(2147483647, 0, Write(1), Ok, 0L, 10L),
+    cop(-2147483648, 1, Write(2), Ok, 12L, 20L),
+    cop(0, 0, Read, Value(1), 30L, 40L),
+  ])
+  match check_default(h, model_or_default("register")) {
+    Violation(v) => {
+      inspect(v.ops.length(), content="3")
+      let mut i = 1
+      while i < v.ops.length() {
+        assert_true(v.ops[i - 1].id < v.ops[i].id)
+        i = i + 1
+      }
+    }
+    _ => inspect("<应当 Violation>", content="")
+  }
+}
+
+// ============================================================
 // 交叉验证：暴力全排列参考实现
 // ============================================================
 //

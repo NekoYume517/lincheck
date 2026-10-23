@@ -53,6 +53,11 @@ pub fn concurrent(a : Operation, b : Operation) -> Bool
 pub fn History::to_jsonl(self : History) -> String
 pub fn History::from_jsonl(text : StringView) -> Result[History, HistoryError] raise
 
+/// 排序用的全序比较：先 start 再 id（显式三分支，不做减法——
+/// start 是完整 Int64、id 是完整 Int32，减法在极值处会溢出并破坏全序）
+pub fn compare_ops(a : Operation, b : Operation) -> Int32
+pub fn compare_ops_by_id(a : Operation, b : Operation) -> Int32
+
 pub(all) suberror HistoryError {
   BadLine(line_no : Int32, reason : String)
 } derive(Eq, Debug)

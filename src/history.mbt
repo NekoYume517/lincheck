@@ -84,21 +84,46 @@ pub fn History::length(self : History) -> Int32 {
 }
 
 ///|
+/// 操作的全序比较：先 `start`，再 `id`（两个键都是升序）。
+///
+/// **不要用减法实现**（`a.start - b.start` / `a.id - b.id`）：`start` 是完整
+/// Int64、`id` 是完整 Int32（audit2_test 锁定边界值），两端差值会溢出，
+/// 比较结果不再传递，`sort_by` 得到的顺序会与实际大小关系相反。
+/// 这是可复现的契约违反：极端 id 下见证子集不再满足「按 id 升序」（见
+/// `history_test.mbt` / `checker_test.mbt` 的极值回归测试）。
+pub fn compare_ops(a : Operation, b : Operation) -> Int32 {
+  if a.start < b.start {
+    -1
+  } else if a.start > b.start {
+    1
+  } else if a.id < b.id {
+    -1
+  } else if a.id > b.id {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+/// 只按 `id` 升序比较（见证输出排序用），同样避免减法溢出。
+pub fn compare_ops_by_id(a : Operation, b : Operation) -> Int32 {
+  if a.id < b.id {
+    -1
+  } else if a.id > b.id {
+    1
+  } else {
+    0
+  }
+}
+
+///|
 /// 按 `start` 升序返回一份新历史；`start` 相同时按 `id` 升序，保证确定性。
 ///
 /// 不改动 `self`：内部先 `copy()` 再排序。
 pub fn History::sort_by_start(self : History) -> History {
   let sorted = self.operations.copy()
-  sorted.sort_by(fn(a, b) {
-    let d = a.start - b.start
-    if d < 0L {
-      -1
-    } else if d > 0L {
-      1
-    } else {
-      a.id - b.id
-    }
-  })
+  sorted.sort_by(compare_ops)
   { operations: sorted, }
 }
 

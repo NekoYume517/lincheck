@@ -501,9 +501,12 @@ pub fn[M : Model] shrink(
 
 ///|
 /// 按 id 升序排序（见证子集要求稳定输出）
+///
+/// 用 `compare_ops_by_id`（显式三分支），不用 `a.id - b.id`：id 允许完整
+/// Int32 范围，减法在极值处回绕会让见证子集不再升序（API.md 承诺）。
 pub fn sort_ops_by_id(ops : Array[Operation]) -> Array[Operation] {
   let out = ops.copy()
-  out.sort_by(fn(a, b) { a.id - b.id })
+  out.sort_by(compare_ops_by_id)
   out
 }
 

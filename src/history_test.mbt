@@ -90,6 +90,33 @@ test "history_sort_by_start_is_stable_on_id" {
   inspect(h.operations[0].id, content="2")
 }
 
+///|
+/// 比较器不得用减法：`start` 是完整 Int64 范围，两端的差值会溢出，
+/// 溢出后的比较结果破坏全序（这里会直接倒序）。
+test "history_sort_by_start 在 Int64 极值下仍按 start 升序" {
+  let h = hist([
+    hop(
+      0,
+      0,
+      Write(1),
+      OpResult::Ok,
+      9223372036854775807L,
+      9223372036854775807L,
+    ),
+    hop(
+      1,
+      0,
+      Write(2),
+      OpResult::Ok,
+      -9223372036854775807L,
+      -9223372036854775807L,
+    ),
+  ])
+  let s = h.sort_by_start()
+  inspect(s.operations[0].id, content="1")
+  inspect(s.operations[1].id, content="0")
+}
+
 // ============================================================
 // happens_before / concurrent
 // ============================================================
