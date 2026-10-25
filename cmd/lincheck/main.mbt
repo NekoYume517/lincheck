@@ -103,6 +103,12 @@ pub fn parse_int_arg(s : String) -> Int32? {
   if body.length() == 0 {
     return None
   }
+  if neg && body == "2147483648" {
+    // 唯一绝对值超 Int32 上限的合法负数：整个数字串恰为 2147483648。
+    // 必须在累加循环之前放行——循环内的溢出检查会先把它拒成 None，
+    // 旧实现对此的放行写在循环之后，实际永远到不了。
+    return Some(-2147483648)
+  }
   // Int32 上限 2147483647：累加前判断 acc 是否还会溢出，溢出返回 None
   // 让调用方报「参数值非法」，而不是静默回绕成另一个数。
   let mut acc = 0
@@ -117,9 +123,6 @@ pub fn parse_int_arg(s : String) -> Int32? {
     acc = acc * 10 + d
   }
   if neg {
-    if acc == 0 {
-      return Some(-2147483648)
-    }
     Some(-acc)
   } else {
     Some(acc)

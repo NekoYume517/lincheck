@@ -34,6 +34,18 @@ test "parse_int_arg：溢出必须拒绝而不是回绕" {
 }
 
 ///|
+test "parse_int_arg：-0 是 0，-2147483648 才是 Int32 最小值" {
+  // 回归：旧的 `acc == 0` 放行分支把 `-0` 错当成 -2147483648，
+  // 而真正的 `-2147483648` 在累加循环里就被溢出检查拒成 None——
+  // 两个边界都错，且方向相反。
+  assert_eq(parse_int_arg("-0"), Some(0))
+  assert_eq(parse_int_arg("-2147483648"), Some(-2147483648))
+  assert_true(parse_int_arg("-2147483649").is_empty())
+  // 前导零形态与正数侧一致地接受（"0000"/"-0000" 都是 0）
+  assert_eq(parse_int_arg("-0000"), Some(0))
+}
+
+///|
 test "parse_double_arg：整数值与符号" {
   assert_eq(parse_double_arg("1"), Some(1.0))
   assert_eq(parse_double_arg("-2"), Some(-2.0))
