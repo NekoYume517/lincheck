@@ -203,6 +203,59 @@ test "minimize of empty history is empty" {
 }
 
 ///|
+/// F3 回归：explain_minimal 的结语不得做未经验证的强断言。
+/// register_bad（W=1, W=2, R->1）在 min_witness=2 下界处停止（3 条），
+/// 但删掉 W=1 后 {W=2, R->1} 仍违规——「删掉任何一个操作都会变回线性一致」
+/// 这句话对该结果不成立，必须改用如实措辞。
+test "minimize 结语不做未经验证的强断言（register_bad）" {
+  let v = minimize(bad_history(), reg(), CheckConfig::default())
+  assert_eq(v.ops.length(), 3)
+  // 前提核实：该结果并非 1-minimal（存在删一条仍违规的方案）
+  let mut any_still_violates = false
+  for i, _ in v.ops {
+    let rest = remove_chunk(v.ops, i, 1)
+    if still_violates(rest, register_model(), CheckConfig::default()) {
+      any_still_violates = true
+    }
+  }
+  assert_true(any_still_violates)
+  // 强断言必须消失，替换为弱措辞
+  assert_true(
+    !v.explanation.contains(
+      "删掉其中任何一个操作，历史都会变回线性一致",
+    ),
+  )
+  assert_true(v.explanation.contains("无法继续缩减"))
+}
+
+///|
+/// 对照面：真 1-minimal 的结果（删任何一条都线性一致）仍应保留强断言。
+test "minimize 结语在真 1-minimal 时保留强断言（noisy 对）" {
+  let h = hist_of([
+    mk_op(0, 0, Read, Value(0), 0L, 2L),
+    mk_op(1, 1, Write(1), Ok, 0L, 10L),
+    mk_op(2, 2, Write(2), Ok, 12L, 20L),
+    mk_op(3, 3, Read, Value(0), 22L, 24L), // 真问题：写已完成却读到旧值
+    mk_op(4, 1, Read, Value(1), 30L, 40L),
+    mk_op(5, 2, Write(1), Ok, 50L, 60L),
+    mk_op(6, 4, Read, Value(1), 62L, 70L),
+    mk_op(7, 0, Read, Value(0), 72L, 80L),
+  ])
+  let v = minimize(h, reg(), CheckConfig::default())
+  assert_eq(v.ops.length(), 2)
+  // 前提核实：删任何一条都线性一致（真 1-minimal）
+  for i, _ in v.ops {
+    let rest = remove_chunk(v.ops, i, 1)
+    assert_true(!still_violates(rest, register_model(), CheckConfig::default()))
+  }
+  assert_true(
+    v.explanation.contains(
+      "删掉其中任何一个操作，历史都会变回线性一致",
+    ),
+  )
+}
+
+///|
 test "remove_chunk drops the right range" {
   let ops = [
     mk_op(0, 0, Read, Value(0), 0L, 1L),

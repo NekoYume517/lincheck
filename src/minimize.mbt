@@ -511,11 +511,19 @@ pub fn sort_ops_by_id(ops : Array[Operation]) -> Array[Operation] {
 }
 
 ///|
-/// 拼一段人类可读的说明
-fn explain_minimal(
+/// 拼一段人类可读的说明。
+///
+/// 结语必须**复验后才做强断言**：对结果的每一条操作试删一次并跑检查器，
+/// 全部「删掉后变回线性一致」才声称「删掉其中任何一个操作，历史都会变
+/// 线性一致」；只要存在删一条仍违规的方向（ddmin 在 `min_witness` 下界
+/// 停止时常见，例如 register_bad 的 {W=1, W=2, R->1} 删 W=1 后仍违规），
+/// 就改用如实的弱措辞。成本 n 次检查（n 是见证长度，通常 <= 5）。
+fn[M : Model] explain_minimal(
   original_n : Int32,
   ops : Array[Operation],
   prefix : String,
+  model : M,
+  config : CheckConfig,
 ) -> String {
   let sb = StringBuilder()
   sb.write_string(prefix)
@@ -529,9 +537,22 @@ fn explain_minimal(
     sb.write_string(op_line(op))
     sb.write_string("\n")
   }
-  sb.write_string(
-    "删掉其中任何一个操作，历史都会变回线性一致。",
-  )
+  // 逐条复验：删掉第 i 条后是否仍违规（i 用下标，同 id 操作各自可删）
+  let mut any_remains = false
+  for i, _ in ops {
+    if still_violates(remove_chunk(ops, i, 1), model, config) {
+      any_remains = true
+    }
+  }
+  if any_remains {
+    sb.write_string(
+      "在最少保留这么多个操作的约束下无法继续缩减：存在删掉某一条后仍违规的方向，但继续缩减会跌破最小见证下界或破坏可解释性。",
+    )
+  } else {
+    sb.write_string(
+      "删掉其中任何一个操作，历史都会变回线性一致。",
+    )
+  }
   sb.to_string()
 }
 
@@ -609,7 +630,9 @@ fn[M : Model] minimize_opt(
         Some(Violation::{
           ops: sort_ops_by_id(minimal),
           depth,
-          explanation: explain_minimal(original_n, minimal, "delta debugging"),
+          explanation: explain_minimal(
+            original_n, minimal, "delta debugging", model, config,
+          ),
         })
       } else {
         let expl = Expl::new()
@@ -631,7 +654,7 @@ fn[M : Model] minimize_opt(
               ops: sort_ops_by_id(minimal),
               depth,
               explanation: explain_minimal(
-                original_n, minimal, "delta debugging",
+                original_n, minimal, "delta debugging", model, config,
               ),
             })
           }
@@ -751,7 +774,7 @@ pub fn[M : Model] minimize_by_process_opt(
             ops: sort_ops_by_id(minimal),
             depth,
             explanation: explain_minimal(
-              original_n, minimal, "按进程 + 逐操作最小化",
+              original_n, minimal, "按进程 + 逐操作最小化", model, config,
             ),
           })
         }
