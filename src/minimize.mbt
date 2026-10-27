@@ -592,32 +592,44 @@ fn seed_of(history : History, v : Violation) -> Array[Operation] {
 }
 
 ///|
+/// 最小化的**四态**结论。
+///
+/// 为什么必须有这个类型：`Violation?` 只能表达「有见证」与「没有可解释见证」
+/// 两态，无法表达「压根没下结论」。旧实现把 `Unknown` 塞进了 `Violation`
+/// 载体（`ops` = 全部操作 + 文本「无法最小化」），于是 `Some(Violation{...})`
+/// 在「已判定违规」与「预算耗尽未判定」两种情况下都成立——CLI 因此无从区分，
+/// 把一次没跑完的搜索渲染成了 `✗ NON-LINEARIZABLE` + exit 1。
+///
+/// `docs/exit-codes.md` 明确要求这两种情形给出不同退出码（`1` 是有效结论，
+/// `3` 是没有结论），所以类型上必须分开。
+pub(all) enum MinimizeOutcome {
+  /// 历史线性一致，不存在反例
+  Consistent
+  /// 历史违规，且找到了最小见证
+  MinViolation(Violation)
+  /// 历史违规，但不存在满足下界与可解释性的见证
+  NoWitness
+  /// 未下结论（预算耗尽、响应证据不完整或区间非法）
+  Inconclusive(String)
+}
+
+///|
 /// 违规见证的可空版本：`None` = 历史违规，但不存在满足下界与可解释性的见证。
 ///
 /// `min_witness <= 0` 时走**无守卫**路径（纯 ddmin，允许压到 1 条操作），
 /// 保留 `minimize_raw` 的既有语义（教学 / 对照用）。
-fn[M : Model] minimize_opt(
+fn[M : Model] minimize_outcome_opt(
   history : History,
   model : M,
   config : CheckConfig,
   min_witness : Int32,
-) -> Violation? {
+) -> MinimizeOutcome {
   let original_n = history.length()
   let outcome = check_with(history, model, config)
   match outcome {
-    Linearizable =>
-      Some(Violation::{
-        ops: [],
-        depth: 0,
-        explanation: "历史线性一致，不存在反例。",
-      })
-    Unknown(reason) =>
-      Some(
-        no_witness(
-          history.operations,
-          "检查未能给出结论（\{reason}），无法最小化；返回全部操作供人工查看。",
-        ),
-      )
+    Linearizable => Consistent
+    // 未下结论时不构造任何「见证」——原样交给调用方，由它决定退出码。
+    Unknown(reason) => Inconclusive(reason)
     Violation(v) => {
       let seed = seed_of(history, v)
       if min_witness <= 0 {
@@ -627,7 +639,7 @@ fn[M : Model] minimize_opt(
           Violation(v2) => v2.depth
           _ => v.depth
         }
-        Some(Violation::{
+        MinViolation(Violation::{
           ops: sort_ops_by_id(minimal),
           depth,
           explanation: explain_minimal(
@@ -650,7 +662,7 @@ fn[M : Model] minimize_opt(
               Violation(v2) => v2.depth
               _ => v.depth
             }
-            Some(Violation::{
+            MinViolation(Violation::{
               ops: sort_ops_by_id(minimal),
               depth,
               explanation: explain_minimal(
@@ -658,10 +670,42 @@ fn[M : Model] minimize_opt(
               ),
             })
           }
-          None => None
+          None => NoWitness
         }
       }
     }
+  }
+}
+
+///|
+/// 旧 `Violation?` 入口的适配层（保留既有语义，供 `minimize_with` 等使用）。
+///
+/// `Inconclusive` 仍然映射成「全部操作 + 如实说明」的载体，因为
+/// `API.md` §4 把这条文本行为写进了 `minimize` 的契约（`unknown_results_test`
+/// 也锁定它）。需要**区分**「未下结论」与「已判定违规 / 无见证」的调用方
+/// 必须改用 `minimize_outcome`。
+fn[M : Model] minimize_opt(
+  history : History,
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+) -> Violation? {
+  match minimize_outcome_opt(history, model, config, min_witness) {
+    Consistent =>
+      Some(Violation::{
+        ops: [],
+        depth: 0,
+        explanation: "历史线性一致，不存在反例。",
+      })
+    MinViolation(v) => Some(v)
+    NoWitness => None
+    Inconclusive(reason) =>
+      Some(
+        no_witness(
+          history.operations,
+          "检查未能给出结论（\{reason}），无法最小化；返回全部操作供人工查看。",
+        ),
+      )
   }
 }
 
@@ -814,12 +858,35 @@ pub fn minimize(
 /// 最小见证（可空入口）：`None` = 历史违规但不存在满足下界与可解释性的见证。
 ///
 /// CLI 用它区分「最小化：N → M」与「N 个操作里找不到可输出的见证」。
+///
+/// **注意**：这个签名无法表达「未下结论」——预算耗尽时它同样返回
+/// `Some(Violation{ ops: 全部操作, ... })`（历史行为，被 `unknown_results_test`
+/// 锁定）。需要按退出码区分三态的命令行 / 脚本请用 `minimize_outcome`。
 pub fn minimize_witness(
   history : History,
   model : AnyModel,
   config : CheckConfig,
 ) -> Violation? {
   minimize_opt(history, model, config, MIN_WITNESS)
+}
+
+///|
+/// 最小化的四态入口（对外）：`Consistent` / `MinViolation` /
+/// `NoWitness` / `Inconclusive`。
+///
+/// 这是唯一能把「没下结论」与「已判定违规」分开的入口。CLI 的 `minimize`
+/// 必须用它，否则 `docs/exit-codes.md` 要求的 `1` / `3` 之分会丢失。
+pub fn minimize_outcome(
+  history : History,
+  model : AnyModel,
+  config : CheckConfig,
+) -> MinimizeOutcome {
+  match model {
+    Register(m) => minimize_outcome_opt(history, m, config, MIN_WITNESS)
+    Counter(m) => minimize_outcome_opt(history, m, config, MIN_WITNESS)
+    Set(m) => minimize_outcome_opt(history, m, config, MIN_WITNESS)
+    Queue(m) => minimize_outcome_opt(history, m, config, MIN_WITNESS)
+  }
 }
 
 ///|

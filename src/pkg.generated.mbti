@@ -62,6 +62,8 @@ pub fn[M : Model] minimize_by_process_opt(History, M, Int32) -> Violation?
 
 pub fn[M : Model] minimize_by_process_with(History, M, Int32) -> Violation
 
+pub fn minimize_outcome(History, AnyModel, CheckConfig) -> MinimizeOutcome
+
 pub fn minimize_raw(History, AnyModel, CheckConfig) -> Violation
 
 pub fn[M : Model] minimize_with(History, M, CheckConfig) -> Violation
@@ -190,6 +192,13 @@ pub fn History::length(Self) -> Int32
 pub fn History::new() -> Self
 pub fn History::sort_by_start(Self) -> Self
 pub fn History::to_jsonl(Self) -> String
+
+pub(all) enum MinimizeOutcome {
+  Consistent
+  MinViolation(Violation)
+  NoWitness
+  Inconclusive(String)
+}
 
 pub(all) enum OpKind {
   Write(Int32)

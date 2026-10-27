@@ -6,6 +6,8 @@ pub fn parse_double_arg(String) -> Double?
 
 pub fn parse_int_arg(String) -> Int32?
 
+pub fn run(Array[String]) -> Int32
+
 // Errors
 type DataFailure
 

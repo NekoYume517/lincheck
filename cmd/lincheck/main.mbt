@@ -389,13 +389,29 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     max_states: 200_000,
     allow_unknown_results: false,
   }
-  // 用可空入口明确区分「最小化：N → M」与「找不到可输出的见证」。
-  // 后者退出码仍是 1：历史确实违规是一个有效结论，只是没有满足
-  // 「下界 + 可解释性」的证据子集可给——不能静默把退化解（1 条操作）
-  // 当作最小反例输出，也不能降级成 0/3。
-  let v = match @lib.minimize_witness(history, model, cfg) {
-    Some(w) => w
-    None => {
+  // 用四态入口区分「线性一致 / 已判定违规且有见证 / 无合格见证 / 未下结论」。
+  //
+  // 旧实现用的是 `minimize_witness`（`Violation?`），而它把 `Unknown` 也编码成
+  // `Some(Violation{ ops = 全部操作 })` —— 于是「预算耗尽」与「已判定违规」在
+  // 这个返回值上不可区分，CLI 会把一次没跑完的搜索渲染成 `✗ NON-LINEARIZABLE`
+  // + exit 1，正是 `docs/exit-codes.md` 点名要避免的最坏情形。
+  match @lib.minimize_outcome(history, model, cfg) {
+    @lib.Inconclusive(reason) => {
+      // 与 `check` 同口径：没有结论就是 3，且不得出现 NON-LINEARIZABLE 字样。
+      if cli.json {
+        println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
+      } else {
+        println("? UNKNOWN  \{reason}")
+        println(
+          "  无法最小化：检查本身没有给出结论，因此不存在可输出的见证。",
+        )
+        println(
+          "  提示：--budget-ms 给得太小或历史过大时会出现这种情况；放开预算后重跑。",
+        )
+      }
+      EXIT_UNKNOWN
+    }
+    @lib.NoWitness => {
       if cli.json {
         println(
           "{\"verdict\":\"non-linearizable\",\"total\":\{original_n},\"witness\":[],\"reason\":\"no-explainable-witness\"}",
@@ -411,60 +427,64 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
           "  \{@lib.no_explainable_witness_text(original_n, @lib.MIN_WITNESS)}",
         )
       }
-      return EXIT_VIOLATION
-    }
-  }
-  if v.ops.length() == 0 {
-    if cli.json {
-      println("{\"verdict\":\"linearizable\",\"total\":\{original_n}}")
-    } else {
-      println("✓ 历史线性一致，没有反例需要最小化。")
-    }
-    EXIT_OK
-  } else {
-    // 硬性验证：最小化产物必须仍然违规
-    let witness = @lib.History::{ operations: v.ops, }
-    let confirmed = match
-      @lib.check(witness, model, @lib.CheckConfig::default()) {
-      @lib.Violation(_) => true
-      @lib.Unknown(reason) => {
-        if cli.json {
-          println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
-        } else {
-          println("? UNKNOWN  \{reason}")
-          println("  \{v.explanation}")
-        }
-        return EXIT_UNKNOWN
-      }
-      _ => false
-    }
-    if cli.json {
-      // 退出码与 JSON 结论必须一致：confirmed=false 意味着连 check 都
-      // 无法复现这个「见证」，此时宣称 non-linearizable 是把脚本当猴耍
-      // —— 它会把这个历史记成一个已证实的 bug。未知就写 unknown。
-      let verdict = if confirmed { "non-linearizable" } else { "unknown" }
-      println(json_violation(v, history, verdict))
-      if !confirmed {
-        println(
-          "{\"note\":\"witness could not be re-confirmed by check\",\"reason\":\"witness chain broken\"}",
-        )
-      }
-    } else {
-      println(if confirmed { "✗ NON-LINEARIZABLE" } else { "? UNKNOWN" })
-      println("")
-      println("  最小化：\{original_n} → \{v.ops.length()} 个操作")
-      println(
-        "  再验证：\{if confirmed { "仍违规 ✓" } else { "未能复现 ✗" }}",
-      )
-      println("")
-      println(render_ops_indented(v.ops))
-      println("")
-      println("  \{v.explanation}")
-    }
-    if confirmed {
       EXIT_VIOLATION
-    } else {
-      EXIT_UNKNOWN
+    }
+    @lib.Consistent => {
+      if cli.json {
+        println("{\"verdict\":\"linearizable\",\"total\":\{original_n}}")
+      } else {
+        println("✓ 历史线性一致，没有反例需要最小化。")
+      }
+      EXIT_OK
+    }
+    @lib.MinViolation(v) => {
+      // 硬性验证：最小化产物必须仍然违规。
+      //
+      // 这里必须用用户给的预算，不能回落到 `CheckConfig::default()`：那不是
+      // 「再验证」，而是用另一个（宽松得多）的配置替用户重跑一遍 —— 预算
+      // 一旦被截断，主检查报 Unknown、再验证却跑通，结论就被偷偷升级了。
+      let witness = @lib.History::{ operations: v.ops, }
+      let confirmed = match @lib.check(witness, model, cfg) {
+        @lib.Violation(_) => true
+        @lib.Unknown(reason) => {
+          if cli.json {
+            println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
+          } else {
+            println("? UNKNOWN  \{reason}")
+            println("  \{v.explanation}")
+          }
+          return EXIT_UNKNOWN
+        }
+        _ => false
+      }
+      if cli.json {
+        // 退出码与 JSON 结论必须一致：confirmed=false 意味着连 check 都
+        // 无法复现这个「见证」，此时宣称 non-linearizable 是把脚本当猴耍
+        // —— 它会把这个历史记成一个已证实的 bug。未知就写 unknown。
+        let verdict = if confirmed { "non-linearizable" } else { "unknown" }
+        println(json_violation(v, history, verdict))
+        if !confirmed {
+          println(
+            "{\"note\":\"witness could not be re-confirmed by check\",\"reason\":\"witness chain broken\"}",
+          )
+        }
+      } else {
+        println(if confirmed { "✗ NON-LINEARIZABLE" } else { "? UNKNOWN" })
+        println("")
+        println("  最小化：\{original_n} → \{v.ops.length()} 个操作")
+        println(
+          "  再验证：\{if confirmed { "仍违规 ✓" } else { "未能复现 ✗" }}",
+        )
+        println("")
+        println(render_ops_indented(v.ops))
+        println("")
+        println("  \{v.explanation}")
+      }
+      if confirmed {
+        EXIT_VIOLATION
+      } else {
+        EXIT_UNKNOWN
+      }
     }
   }
 }
@@ -664,7 +684,13 @@ fn parse_args(cmd : String, argv : Array[String]) -> Cli? {
 }
 
 ///|
-fn run(argv : Array[String]) -> Int32 {
+/// 执行一次调用并返回退出码。
+///
+/// 标 `pub` 仅为可测性，理由同 `parse_int_arg`：可执行包没有下游消费者，而
+/// 主包的 `*_test.mbt` 只能看到 pub 符号。退出码是 `docs/exit-codes.md` 的核心
+/// 契约（`1` = 有效结论 / `3` = 没有结论），只有直接断言它才能锁住
+/// 「预算耗尽不得被渲染成已判定违规」这类缺陷。
+pub fn run(argv : Array[String]) -> Int32 {
   if argv.length() < 2 {
     usage()
     return EXIT_USAGE
