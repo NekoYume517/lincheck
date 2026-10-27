@@ -191,7 +191,20 @@ pub fn minimize(history : History, model : Model, config : CheckConfig) -> Viola
 pub fn minimize_by_process(history : History, model : Model) -> Violation
 
 /// 同上，可空入口：None = 历史违规，但不存在满足下界与可解释性的见证
+/// 注意：这个签名**无法表达「未下结论」**——预算耗尽时它同样返回
+/// Some(Violation{ ops = 全部操作 })。要区分三态请用 minimize_outcome。
 pub fn minimize_witness(history : History, model : AnyModel, config : CheckConfig) -> Violation?
+
+/// 四态入口（CLI 与脚本应使用这个）
+pub fn minimize_outcome(history : History, model : AnyModel, config : CheckConfig) -> MinimizeOutcome
+
+/// 最小化的四态结论
+pub(all) enum MinimizeOutcome {
+  Consistent          /// 历史线性一致，不存在反例
+  MinViolation(Violation)  /// 历史违规，且找到了最小见证
+  NoWitness           /// 历史违规，但不存在满足下界与可解释性的见证
+  Inconclusive(String)     /// 未下结论（预算耗尽 / 证据不完整 / 区间非法）
+}
 pub fn[M : Model] minimal_witness(
   seed : Array[Operation],
   pool : Array[Operation],
@@ -203,6 +216,12 @@ pub fn[M : Model] minimal_witness(
 ```
 
 要求：最小化后仍必须违规（用 `check` 验证），且操作数尽量少。
+
+`MinimizeOutcome` 的存在理由：`docs/exit-codes.md` 要求「已判定违规」（退出码 `1`）
+与「没有结论」（退出码 `3`）严格区分，而 `Violation?` 把预算耗尽也编码成
+`Some(Violation{ ops = 全部操作, explanation = "…无法最小化…" })` —— 两种情形在
+该返回值上不可区分，CLI 曾因此把一次没跑完的搜索渲染成 `✗ NON-LINEARIZABLE`
++ exit 1。需要按退出码区分三态的调用方必须用 `minimize_outcome`。
 
 **最终返回值的三重约束**（`witness_ok`，缺一不可）：
 
@@ -277,7 +296,11 @@ lincheck gen       --model register --processes 3 --ops 10 --seed 42 --consisten
 lincheck selfcheck --model register --seeds 100        # 元测试：生成的合法历史必须通过
 ```
 
-退出码：0 线性一致，1 发现违规，2 用法错误，3 未知。
+`--ops` 是**每个客户端**的操作数，总操作数 = `processes × ops`；
+`--processes 3 --ops 10` 因此产出 30 条。该乘积超出 Int32 时 `gen` 报用法错误
+（退出码 `2`），不静默回绕（见 `total_ops_checked`）。
+
+退出码：0 线性一致，1 发现违规，2 用法错误，3 未知，4 输入数据错误。
 
 ## 8. 测试要求
 

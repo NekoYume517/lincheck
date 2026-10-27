@@ -2,7 +2,7 @@
 
 > 仓库：<https://github.com/NekoYume517/lincheck>
 > 赛事：MoonBit Hackathon 2026
-> 状态：已交付（`moon check` 0 错误 · 180 测试全绿 · CI 全绿 · wasm 构建通过）
+> 状态：已交付（`moon check` 0 错误 · 210 测试全绿 · CI 全绿 · wasm 构建通过）
 
 ---
 
@@ -58,7 +58,7 @@ counter 模型曾把 `v == current` 的幂等写也拒绝——把"单调计数�
 
 ## 5. 质量保障
 
-- **180 个测试**，含 16 个对抗性审计回归（`audit_test.mbt` 10 + `audit2_test.mbt` 6：非法区间、状态别名、缓存开关一致性、50ms 预算超时、位图跨字边界、FIFO、整数精度）
+- **210 个测试**。其中 16 个是最早两轮的对抗性审计回归（`audit_test.mbt` 10 + `audit2_test.mbt` 6：非法区间、状态别名、缓存开关一致性、50ms 预算超时、位图跨字边界、FIFO、整数精度）；另有 23 个来自 2026-10-27 的 CLI/解析层审计（`cli_exit_code_test.mbt` 7：预算耗尽时 check/minimize/visualize 退出码一致；`cli_data_error_test.mbt` 5：坏 JSONL 必须报出行号与原因；`audit_generate_overflow_test.mbt` 4：`processes × ops` 溢出；`audit_bom_test.mbt` 7：首行 BOM 剥离及「只剥一个、只剥首行」的边界）
 - **暴力全排列交叉验证**：n≤6 的历史穷举所有排列，与 WGL 结论逐一对照——这是元测试之外唯一能证明"剪枝没剪错"的手段
 - **40 例随机 fuzz**：随机 counter 历史上 `minimize` 的"未能复现"率从 33/160（修复前）降到 0
 - **两轮审查**：第一轮修复证据链断裂（L1）、静默回退（`--model reqister`）、退出码混淆；第二轮修复时间轴双打印并确认 fuzz 归零

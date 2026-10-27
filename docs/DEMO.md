@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 180 个测试
+moon test      # 210 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 180, passed: 180, failed: 0.`
+预期：`Total tests: 210, passed: 210, failed: 0.`
 
 ## 二、看核心判定
 
@@ -152,6 +152,11 @@ done
 ```bash
 moon run cmd/lincheck -- gen --model register --processes 3 --ops 10 --seed 42 --consistent
 ```
+
+`--ops` 是**每个客户端**的操作数，所以上面这条产出 `3 × 10 = 30` 行 JSONL
+（`--processes` 是客户端数）。`--ops 0` 或 `--processes 0` 产出空历史；
+`processes × ops` 超出 Int32 会直接报用法错误（退出码 2），
+不会静默回绕成一个错误的规模。
 
 输出是 JSONL，可以直接喂给 `check`。同一个 seed 两次输出**字节级相同**（有 SHA256 比对测试）。
 

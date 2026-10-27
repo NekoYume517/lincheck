@@ -98,3 +98,18 @@ history reports what it found in the exit code.
 
 When you only want the rendering, ignore the exit code. When you want a
 verdict, use `check`.
+
+### `--budget-ms` applies to all three commands
+
+`check`, `minimize` and `visualize` all accept `--budget-ms`, and all three use
+exactly the budget you pass — including the re-confirmation step inside
+`minimize`. Given the same history and the same budget they reach the same
+verdict and the same exit code.
+
+That matters for the `1` / `3` split above. If a budget is too small for the
+search, the honest answer is `3` from every command; no command may substitute
+a longer default budget and report a conclusion the caller's budget never
+allowed. A run whose search was cut short is "no answer", not a violation.
+
+`--budget-ms 0` (or negative) means no time limit, as documented on
+`CheckConfig`.

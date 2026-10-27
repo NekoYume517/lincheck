@@ -62,6 +62,8 @@ lincheck gen       --model register --processes 3 --ops 10 --seed 42 --consisten
 lincheck selfcheck --model register --seeds 100
 ```
 
+`--ops` 是**每个客户端**的操作数：`--processes 3 --ops 10` 产出 30 条操作（总数 = `processes × ops`）。`processes × ops` 超出 Int32 时报用法错误（退出码 `2`），不会静默生成一份规模不对的历史。
+
 退出码：`0` 线性一致 / `1` 发现违规 / `2` 用法错误 / `3` 结论未知 / `4` 输入数据错误。
 
 > **为什么 `1` 和 `4` 要分开**：`1` 的意思是「历史确实非线性一致」，这是一个
