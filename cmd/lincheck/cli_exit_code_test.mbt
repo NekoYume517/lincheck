@@ -76,6 +76,25 @@ test "LC-7: 预算耗尽时 minimize 的退出码必须与 check 一致（都是
   inspect(minimize_code, content="3")
 }
 
+///|
+test "LC-8: 预算耗尽时 visualize 的退出码必须与 check 一致（都是 3）" {
+  let path = lc_hard_history_path()
+  if path.length() == 0 {
+    fail("夹具写入失败")
+  }
+  let check_code = run([
+    "lincheck", "check", "--history", path, "--model", "register", "--budget-ms",
+    "1", "--json",
+  ])
+  let visualize_code = run([
+    "lincheck", "visualize", "--history", path, "--model", "register", "--budget-ms",
+    "1",
+  ])
+  // 同一份历史、同一个预算：visualize 不得用默认 5 秒预算另跑一次搜索
+  inspect(check_code, content="3")
+  inspect(visualize_code, content="3")
+}
+
 // ============================================================
 // 守护：修「未知不得报成违规」不能把正常的违规判定也改掉
 // ============================================================

@@ -499,7 +499,18 @@ fn cmd_visualize(cli : Cli) -> Int32 raise {
     None => return EXIT_USAGE
   }
   let history = load_history(cli.history_path)
-  match @lib.check(history, model, @lib.CheckConfig::default()) {
+  // 与 cmd_check / cmd_minimize 同口径：显式 --budget-ms 必须生效。
+  //
+  // 旧实现传的是 `CheckConfig::default()`（5 秒），于是 `--budget-ms 1` 被静默
+  // 忽略：同一份历史下 `check` 探索 1536 个节点就报 unknown，`visualize` 却跑完
+  // 135181 个节点并断言违规（退出码 1）。用户以为限了预算，拿到的是另一次
+  // 搜索的结论 —— 退出码因此与 check 矛盾。
+  let cfg : @lib.CheckConfig = {
+    time_budget_ms: cli.budget_ms,
+    max_states: 200_000,
+    allow_unknown_results: false,
+  }
+  match @lib.check(history, model, cfg) {
     @lib.Linearizable => {
       println(@lib.render_timeline(history))
       EXIT_OK
