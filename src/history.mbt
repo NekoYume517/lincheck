@@ -628,6 +628,13 @@ fn parse_op_line(
 /// 规则：
 /// - 按 `\n` 切行；空行（含只有空白的行）跳过，但**行号照常累加**，
 ///   这样报错位置与编辑器里的行号一致。
+/// - 首行行首的一个 UTF-8 BOM（U+FEFF）被剥掉。Windows 记事本「另存为
+///   UTF-8」、PowerShell 的 `Out-File -Encoding utf8` / `>` 重定向、部分
+///   日志管道都会写这个字节。它不是 JSON 的一部分，却会让首行的
+///   `@json.parse` 失败，把整份**合法**历史判成数据错误 —— 这条路径在
+///   Windows 上非常常见。与 `recall` 的 `ReviewLog::from_jsonl` 同口径。
+///   只剥**一个**、且只在**首行**：出现在其它位置时它是数据本身的一部分
+///   （或文件被拼接坏了），必须照常报错。
 /// - 任何一行不合法就立刻返回 `Err(BadLine(行号, 原因))`，不做部分成功的静默丢弃。
 ///
 /// 签名保留 `raise` 以匹配契约（调用方可以写 `catch`），实现本身不抛异常，
@@ -642,8 +649,15 @@ pub fn History::from_jsonl(
   for raw in lines {
     line_no = line_no + 1
     if failure.is_none() {
-      let line = raw.trim()
-      if line.length() > 0 {
+      let trimmed = raw.trim()
+      // BOM 可能被行首空白推到 trim 结果的开头，所以在 trim 之后检测。
+      let line : StringView = if line_no == 1 && trimmed.has_prefix("\u{FEFF}") {
+        trimmed[1:trimmed.length()]
+      } else {
+        trimmed
+      }
+      // 剥完 BOM 后可能变成空行（例如文件只有 BOM），此时按空行处理。
+      if line.trim().length() > 0 {
         match parse_op_line(line, line_no) {
           Result::Ok(op) => ops.push(op)
           Err(e) => failure = Some(e)
