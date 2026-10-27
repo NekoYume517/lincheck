@@ -125,6 +125,36 @@ fn[M : Model] pick_legal(
 }
 
 ///|
+/// 钳制规模参数并算出**操作总数**（`processes × ops_per_process`）。
+///
+/// 返回 `None` = 乘积在 Int32 溢出，调用方必须报用法错误而不是继续跑。
+///
+/// 为什么必须显式检查：`processes` 与 `ops_per_process` 都是用户可控的
+/// Int32，乘积在 Int32 回绕会得到一个**完全无关**的循环上界。最危险的一档是
+/// `65536 × 65536` —— 数学乘积 `4294967296` 回绕成 `0`，于是生成器安静地
+/// 产出一份空历史并以 exit 0 退出；调用方拿到 `{}` 与「成功」无法区分
+/// （`gen` 之后 `check` 还会如实报告 `{"verdict":"linearizable","ops":0}`）。
+/// `65537 × 65536` 更隐蔽：回绕成 `65536`，会真的生成一份规模完全不对的历史。
+///
+/// 钳制规则与两个生成器原有的行为一致（`processes < 1 → 1`、
+/// `ops_per_process < 0 → 0`），因此正常调用不受影响。
+///
+/// 用除法而不是乘法来判定溢出：`processes > MAX / per_proc` 在两边都是
+/// 正数时与 `processes * per_proc > MAX` 等价，且自身不会溢出。
+pub fn total_ops_checked(processes : Int32, ops_per_process : Int32) -> Int32? {
+  let procs = if processes < 1 { 1 } else { processes }
+  let per_proc = if ops_per_process < 0 { 0 } else { ops_per_process }
+  if per_proc == 0 {
+    return Some(0)
+  }
+  // Int32 上限 2147483647。procs > MAX / per_proc ⇒ 乘积越界。
+  if procs > 2147483647 / per_proc {
+    return None
+  }
+  Some(procs * per_proc)
+}
+
+///|
 /// 生成一个「保证线性一致」的历史：先在单一全序下执行，再随机拉宽时间区间
 pub fn[M : Model] generate_consistent(model : M, config : GenConfig) -> History {
   let processes = if config.processes < 1 { 1 } else { config.processes }
@@ -140,7 +170,13 @@ pub fn[M : Model] generate_consistent(model : M, config : GenConfig) -> History 
   } else {
     config.concurrency
   }
-  let total = processes * per_proc
+  // 溢出时退化成 0（与 `per_proc == 0` 的空历史一致），而不是回绕成一个
+  // 毫无关系的上界。CLI 会在更外层用 `total_ops_checked` 先报用法错误，
+  // 所以这条兜底只服务于直接调用库的调用方。
+  let total = match total_ops_checked(processes, per_proc) {
+    Some(n) => n
+    None => 0
+  }
 
   // —— 第 1 步：单一全序下依次执行 ——
   let rng = Rng::new(config.seed)
@@ -234,7 +270,11 @@ pub fn[M : Model] generate_random(model : M, config : GenConfig) -> History {
   } else {
     config.concurrency
   }
-  let total = processes * per_proc
+  // 同 generate_consistent：溢出不回绕，退化成空历史（CLI 层会先报用法错误）
+  let total = match total_ops_checked(processes, per_proc) {
+    Some(n) => n
+    None => 0
+  }
   let rng = Rng::new(config.seed * 7 + 13)
   // 只用来校验模型是否认得该 kind（不看返回值）
   let probe_state = model.init()

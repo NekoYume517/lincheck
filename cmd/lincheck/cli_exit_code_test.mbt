@@ -188,3 +188,71 @@ test "LC-7 守护：预算充足时大历史的 minimize 仍是 exit 1 并给出
     content="1",
   )
 }
+
+// ============================================================
+// LC-9：gen 的规模乘积溢出
+// ============================================================
+
+///|
+test "LC-9: gen 的 processes × ops 溢出必须报用法错误（exit 2）" {
+  // 回绕成 0 的那一档：修前会静默产出空历史并 exit 0
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "65536", "--ops",
+      "65536", "--seed", "1",
+    ]),
+    content="2",
+  )
+  // 回绕成负数
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "46341", "--ops",
+      "46341", "--seed", "1",
+    ]),
+    content="2",
+  )
+  // 回绕成正数（更隐蔽：本来会生成规模完全不对的历史）
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "65537", "--ops",
+      "65536", "--seed", "1",
+    ]),
+    content="2",
+  )
+  // --random 走同一个校验
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "65536", "--ops",
+      "65536", "--seed", "1", "--random",
+    ]),
+    content="2",
+  )
+}
+
+///|
+test "LC-9 守护: gen 的正常规模仍 exit 0（校验不能误伤）" {
+  // 注意：这里只用小规模。「不溢出的超大乘积」（如 46340 × 46340 ≈ 21.5 亿）
+  // 按设计必须被**接受**，但它会真的去生成 21.5 亿条历史 —— 那条边界由
+  // 库层的 total_ops_checked 单测覆盖，不在 CLI 上跑。
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "2", "--ops", "3",
+      "--seed", "1",
+    ]),
+    content="0",
+  )
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "1", "--ops", "0",
+      "--seed", "1",
+    ]),
+    content="0",
+  )
+  inspect(
+    run([
+      "lincheck", "gen", "--model", "register", "--processes", "0", "--ops", "2",
+      "--seed", "1",
+    ]),
+    content="0",
+  )
+}

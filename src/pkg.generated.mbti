@@ -126,6 +126,8 @@ pub fn states_equal(Array[Int32], Array[Int32]) -> Bool
 
 pub fn[M : Model] still_violates(Array[Operation], M, CheckConfig) -> Bool
 
+pub fn total_ops_checked(Int32, Int32) -> Int32?
+
 pub fn violation_reason(Violation) -> String
 
 // Errors

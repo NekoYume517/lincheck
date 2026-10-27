@@ -534,15 +534,28 @@ fn cmd_visualize(cli : Cli) -> Int32 raise {
 
 ///|
 fn cmd_gen(cli : Cli) -> Int32 {
+  let model = match require_model(cli) {
+    Some(m) => m
+    None => return EXIT_USAGE
+  }
+  // 规模参数先校验：`processes × ops_per_process` 是用户可控的 Int32 乘积，
+  // 溢出会让生成器回绕出一个毫不相关的循环上界（最坏的一档回绕成 0，
+  // 静默产出一份空历史并 exit 0）。用法错误（2）优先于「生成成功」——
+  // 与 parse_int_arg 对单值溢出的口径一致。
+  match @lib.total_ops_checked(cli.processes, cli.ops_per_process) {
+    Some(_) => ()
+    None => {
+      eprintln(
+        "用法错误: --processes \{cli.processes} × --ops \{cli.ops_per_process} 超出 Int32 范围，无法生成历史（每客户端 --ops 条，总数 = processes × ops）",
+      )
+      return EXIT_USAGE
+    }
+  }
   let cfg = @lib.GenConfig::{
     processes: cli.processes,
     ops_per_process: cli.ops_per_process,
     seed: cli.seed,
     concurrency: cli.concurrency,
-  }
-  let model = match require_model(cli) {
-    Some(m) => m
-    None => return EXIT_USAGE
   }
   let history = match cli.mode {
     "random" => @lib.generate_random(model, cfg)
