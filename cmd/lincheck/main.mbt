@@ -215,6 +215,25 @@ fn usage() -> Unit {
 // ── 载入历史 ──────────────────────────────────────────────────────────
 
 ///|
+/// 把解析失败渲染成可读的错误文本（**行号 + 原因**都在里面）。
+///
+/// 库层的 `History::from_jsonl` 已经算好了「从 1 开始的行号」与具体原因
+/// （见 `history.mbt` 的 `parse_op_line`，注释写明「报错位置与编辑器里的行号
+/// 一致」），旧实现却用 `Err(_)` 把它们整个丢掉，只留一句
+/// `JSONL 解析失败：<路径>` —— 对一个几百行的历史几乎无法定位。
+///
+/// 标 `pub` 仅为可测性（理由同 `parse_int_arg`）：错误文本是这条命令的
+/// 可观测输出，主包的 `*_test.mbt` 只能看到 pub 符号。返回 `String` 而不是
+/// 直接 raise，是为了让测试能无副作用地断言文本。
+pub fn jsonl_error_text(path : String, error : Error) -> String {
+  match error {
+    @lib.BadLine(line_no, reason) =>
+      "JSONL 解析失败：\{path}（第 \{line_no} 行：\{reason}）"
+    _ => "JSONL 解析失败：\{path}"
+  }
+}
+
+///|
 fn load_history(path : String) -> @lib.History raise {
   if path.length() == 0 {
     raise Failure("缺少 --history")
@@ -224,7 +243,7 @@ fn load_history(path : String) -> @lib.History raise {
   }
   match @lib.History::from_jsonl(text) {
     Ok(h) => h
-    Err(_) => raise DataFailure("JSONL 解析失败：\{path}")
+    Err(e) => raise DataFailure(jsonl_error_text(path, e))
   }
 }
 

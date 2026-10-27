@@ -2,6 +2,8 @@
 package "NekoYume517/lincheck/cmd/lincheck"
 
 // Values
+pub fn jsonl_error_text(String, Error) -> String
+
 pub fn parse_double_arg(String) -> Double?
 
 pub fn parse_int_arg(String) -> Int32?
