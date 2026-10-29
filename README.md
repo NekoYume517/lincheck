@@ -37,6 +37,20 @@ A 最后打印出 `2`，合理——B 的写在 A 的读之前就完成了。
 
 ## 快速开始
 
+**作为库依赖**（已发布到 [mooncakes.io](https://mooncakes.io/docs/NekoYume517/lincheck)）：
+
+```bash
+moon add NekoYume517/lincheck
+```
+
+```moonbit
+// 对一段并发历史做线性一致性检查
+let h = @lincheck.ops_to_history(ops)
+let outcome = @lincheck.check_default(h, Register(@lincheck.register_model()))
+```
+
+**作为命令行工具**（源码运行）：
+
 ```bash
 moon check
 moon test
