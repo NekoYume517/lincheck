@@ -50,6 +50,7 @@
 
 ///|
 /// 检查结果。
+#derive(Debug)
 pub(all) enum CheckOutcome {
   /// 线性一致：存在合法全序
   Linearizable
@@ -57,10 +58,11 @@ pub(all) enum CheckOutcome {
   Violation(Violation)
   /// 证据不完整、区间非法或超时，结论未知
   Unknown(String)
-} derive(Debug)
+}
 
 ///|
 /// 反例描述。
+#derive(Debug)
 pub(all) struct Violation {
   /// 反例涉及的操作子集（按 id 升序）。
   ///
@@ -71,10 +73,11 @@ pub(all) struct Violation {
   depth : Int32
   /// 人类可读的解释
   explanation : String
-} derive(Debug)
+}
 
 ///|
 /// 检查配置。
+#derive(Debug)
 pub(all) struct CheckConfig {
   /// 时间预算（毫秒）。`<= 0` 表示不设上限。超时返回 `Unknown`。
   time_budget_ms : Int32
@@ -84,7 +87,7 @@ pub(all) struct CheckConfig {
   /// 默认 false：含未知响应的历史返回 Unknown，不进入搜索。
   /// true 是显式的乐观结果假设，不实现 pending 操作的可选完成语义。
   allow_unknown_results : Bool
-} derive(Debug)
+}
 
 ///|
 /// 默认配置：5 秒预算、20 万条缓存、严格匹配结果。
@@ -744,6 +747,7 @@ pub fn check_default(history : History, model : AnyModel) -> CheckOutcome {
 
 ///|
 /// 搜索统计，用于回答"访问了多少状态"、验证缓存是否真的省了工作。
+#derive(Debug)
 pub(all) struct CheckStats {
   /// 访问的搜索节点数
   explored : Int32
@@ -753,7 +757,7 @@ pub(all) struct CheckStats {
   cache_size : Int32
   /// 是否超时
   timed_out : Bool
-} derive(Debug)
+}
 
 ///|
 /// 跑一次检查并同时返回统计信息。

@@ -131,41 +131,47 @@ pub fn total_ops_checked(Int32, Int32) -> Int32?
 pub fn violation_reason(Violation) -> String
 
 // Errors
+#derive(@debug.Debug)
 pub(all) suberror HistoryError {
   BadLine(Int32, String)
-} derive(@debug.Debug)
+}
 
 // Types and methods
+#derive(@debug.Debug)
 pub(all) enum AnyModel {
   Register(RegisterModel)
   Counter(CounterModel)
   Set(SetModel)
   Queue(QueueModel)
-} derive(@debug.Debug)
+}
 pub impl Model for AnyModel
 
+#derive(@debug.Debug)
 pub(all) struct CheckConfig {
   time_budget_ms : Int32
   max_states : Int32
   allow_unknown_results : Bool
-} derive(@debug.Debug)
+}
 pub fn CheckConfig::default() -> Self
 
+#derive(@debug.Debug)
 pub(all) enum CheckOutcome {
   Linearizable
   Violation(Violation)
   Unknown(String)
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct CheckStats {
   explored : Int32
   cache_hits : Int32
   cache_size : Int32
   timed_out : Bool
-} derive(@debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct CounterModel {
-} derive(@debug.Debug)
+}
 pub impl Model for CounterModel
 
 pub(all) struct Expl {
@@ -202,22 +208,25 @@ pub(all) enum MinimizeOutcome {
   Inconclusive(String)
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum OpKind {
   Write(Int32)
   Read
   Cas(Int32, Int32)
   Append(Int32)
   Pop
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum OpResult {
   Ok
   Value(Int32)
   Bool(Bool)
   Empty
   Nil
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Operation {
   id : Int32
   process : Int32
@@ -225,14 +234,16 @@ pub(all) struct Operation {
   result : OpResult
   start : Int64
   end : Int64
-} derive(Eq, @debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct QueueModel {
-} derive(@debug.Debug)
+}
 pub impl Model for QueueModel
 
+#derive(@debug.Debug)
 pub(all) struct RegisterModel {
-} derive(@debug.Debug)
+}
 pub impl Model for RegisterModel
 
 pub(all) struct Rng {
@@ -248,15 +259,17 @@ type RowLayout
 
 type SearchState
 
+#derive(@debug.Debug)
 pub(all) struct SetModel {
-} derive(@debug.Debug)
+}
 pub impl Model for SetModel
 
+#derive(@debug.Debug)
 pub(all) struct Violation {
   ops : Array[Operation]
   depth : Int32
   explanation : String
-} derive(@debug.Debug)
+}
 
 // Type aliases
 pub type OpId = Int32

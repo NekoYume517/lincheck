@@ -122,7 +122,8 @@ pub fn states_equal(a : State, b : State) -> Bool {
 /// | `Cas(e, n)` | `v != e` | 不变 | `Bool(false)` |
 ///
 /// 其余操作（Append/Pop）在此模型上非法，返回 None。
-pub(all) struct RegisterModel {} derive(Debug)
+#derive(Debug)
+pub(all) struct RegisterModel {}
 
 ///|
 pub impl Model for RegisterModel with fn name(self) {
@@ -185,7 +186,8 @@ pub fn register_model() -> RegisterModel {
 /// | `Write(v)` | `v > value` | `[v]` | `Ok` |
 /// | `Write(v)` | `v <= value` | — | 非法（None） |
 /// | `Read` | 无 | 不变 | `Value(value)` |
-pub(all) struct CounterModel {} derive(Debug)
+#derive(Debug)
+pub(all) struct CounterModel {}
 
 ///|
 pub impl Model for CounterModel with fn name(self) {
@@ -256,7 +258,8 @@ pub fn counter_model() -> CounterModel {
 ///
 /// `Pop` 选择**最小元素**是刻意的确定性约定：不指定的话同一状态会有多个
 /// 可能的"期望返回"，搜索就变成不确定的了。
-pub(all) struct SetModel {} derive(Debug)
+#derive(Debug)
+pub(all) struct SetModel {}
 
 ///|
 /// 掩码位宽：每半个掩码 32 位。
@@ -408,7 +411,8 @@ pub fn set_model() -> SetModel {
 /// | `Pop` | 非空 | 移除队首 | `Value(队首)` |
 /// | `Pop` | 空 | 不变 | `Empty` |
 /// | `Read` | 无 | 不变 | `Value(队首)`，空队时 `Value(-1)` |
-pub(all) struct QueueModel {} derive(Debug)
+#derive(Debug)
+pub(all) struct QueueModel {}
 
 ///|
 /// 队列状态的长度字段下标。
@@ -497,12 +501,13 @@ pub fn queue_model() -> QueueModel {
 /// MoonBit 没有 trait object，所以 CLI 想"按名字选模型"就必须有一个具体类型。
 /// `AnyModel` 自己 `impl Model`，因此泛型函数（例如 `check_with`）可以直接吃它，
 /// 也可以拆开传具体模型享受单态化。
+#derive(Debug)
 pub(all) enum AnyModel {
   Register(RegisterModel)
   Counter(CounterModel)
   Set(SetModel)
   Queue(QueueModel)
-} derive(Debug)
+}
 
 ///|
 pub impl Model for AnyModel with fn name(self) {

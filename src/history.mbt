@@ -27,29 +27,32 @@ pub type OpId = Int32
 /// 注意：`Cas` 的字段在契约文档里写作 `Cas(expected : Int, new : Int)`，
 /// MoonBit 的枚举变体不接受这种带标签的写法（会报 `Expected upper case identifier`），
 /// 因此这里使用等价的**位置参数** `Cas(Int, Int)`，语义顺序仍是 `(期望值, 新值)`。
+#derive(Eq, Debug)
 pub(all) enum OpKind {
   Write(Int32) // 写入值
   Read // 读取
   Cas(Int32, Int32) // 比较并交换：(expected, new)
   Append(Int32) // 队列/日志追加
   Pop // 队列弹出
-} derive(Eq, Debug)
+}
 
 ///|
 /// 操作返回的结果。
 ///
 /// `Nil` 表示"结果未知/超时"——检查器默认把它当作**任何值都不匹配**，
 /// 只有在 `CheckConfig.allow_unknown_results = true` 时才允许它匹配任意期望值。
+#derive(Eq, Debug)
 pub(all) enum OpResult {
   Ok // 写成功
   Value(Int32) // 读到的值
   Bool(Bool) // CAS / Pop 成功与否
   Empty // Pop 时队列为空
   Nil // 超时/未知
-} derive(Eq, Debug)
+}
 
 ///|
 /// 一条历史记录中的单个操作。
+#derive(Eq, Debug)
 pub(all) struct Operation {
   id : OpId
   process : Int32
@@ -57,7 +60,7 @@ pub(all) struct Operation {
   result : OpResult
   start : Int64 // 逻辑时间戳（调用发生）
   end : Int64 // 逻辑时间戳（响应发生）
-} derive(Eq, Debug)
+}
 
 ///|
 /// 一段待检查的历史：若干操作的集合。
@@ -270,9 +273,10 @@ pub fn History::to_jsonl(self : History) -> String {
 ///
 /// 契约写作 `BadLine(line_no : Int, reason : String)`，同样因为枚举/错误变体
 /// 不支持带标签字段，这里使用等价的位置参数。
+#derive(Debug)
 pub(all) suberror HistoryError {
   BadLine(Int32, String)
-} derive(Debug)
+}
 
 ///|
 /// 从 JSON 对象里取一个整数，缺失或类型不符返回 None。
