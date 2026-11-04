@@ -255,7 +255,30 @@ fn record_progress(
 // ============================================================
 
 ///|
-/// 深度优先搜索一个合法线性化顺序。
+/// `dfs` 的显式栈帧。
+///
+/// 递归版里这些量活在被调用者自己的栈帧上；改成迭代后必须显式持有，否则
+/// 语义会漂：`tried` 对应递归版的循环变量 `i`，`first_*` 对应两个证据槽，
+/// `key` 对应节点入口算出的缓存键（回溯时还要用它写缓存，所以必须存下来）。
+priv struct DfsFrame {
+  depth : Int32
+  /// 由哪个操作下标下探到本帧；根帧为 -1。回溯时用它恢复 `remaining`。
+  via : Int32
+  /// 候选表。空数组 = 候选尚未计算（本帧还没做节点入口工作）。
+  candidates : Array[Int32]
+  /// 下一个待尝试的候选下标。
+  tried : Int32
+  node_state : State
+  key : String
+  first_value_fail : Int32
+  first_value_fail_expected : OpResult
+  first_illegal : Int32
+  /// 节点入口工作（记账/超时/终止/缓存/候选）是否已完成。
+  expanded : Bool
+}
+
+///|
+/// 深度优先搜索一个合法线性化顺序（**显式栈迭代实现**）。
 ///
 /// 参数：
 /// - `remaining[i] == true` 表示 `ops[i]` 还没被线性化
@@ -264,6 +287,32 @@ fn record_progress(
 /// - `path`：已线性化的操作下标（按线性化顺序）
 ///
 /// 返回 `true` = 找到合法全序；`false` = 确定失败**或**超时（由 `ctx.timed_out` 区分）。
+///
+/// ## 为什么必须是迭代而不是递归
+///
+/// 递归深度 = 已线性化操作数。**合法历史必须走到 `depth == total`**，
+/// 所以递归深度等于历史操作总数。每个递归帧还携带 `State`（数组拷贝）
+/// 与候选表，原生栈（默认 1MB）在约 2500 个操作处打穿，进程以
+/// `STATUS_STACK_OVERFLOW`(`0xC00000FD`) 死掉 —— 那既不是 `Unknown` 也不是
+/// 任何五个已声明退出码，属于契约外的第六态。
+///
+/// 实测（2026-11-04，register/counter/set/queue 四个模型全部）：
+/// 1000 操作正常，2500 操作必崩；`--budget-ms 100` 侥幸存活只因先超时返回，
+/// 默认 5000ms 直接崩 —— 即"默认配置下大历史永远拿不到结论"。
+///
+/// 迭代版把每帧放在堆上，栈深度与历史规模无关，因此大历史能走到超时、
+/// 如实返回 `Unknown`，或干脆给出结论。
+///
+/// ## 与递归版逐点对齐
+///
+/// - 节点入口一次：`explored += 1`、每 256 节点轮询时钟、`depth == total`
+///   终止、缓存命中即失败、算候选
+/// - 候选顺序：`collect_candidates` 已按 `(start, id)` 升序，逐个尝试
+/// - 失败证据：`first_value_fail`（模型期望≠历史，带期望值）优先于
+///   `first_illegal`（模型拒绝该转换）；两者都只记首个
+/// - 全部候选失败才 `record_progress` + 写缓存（顺序不变）
+/// - 成功即 `return true`：深层已记录过最长前缀，上层 `record_progress`
+///   在 `depth > best_depth` 判定下本来就是 no-op，跳过等价
 fn[M : Model] dfs(
   ctx : SearchState,
   model : M,
@@ -274,124 +323,173 @@ fn[M : Model] dfs(
   path : Array[Int32],
   config : CheckConfig,
 ) -> Bool {
-  // ---- 0. 记账 + 超时检查 ----
-  ctx.explored = ctx.explored + 1
-  poll_deadline(ctx)
-  if ctx.timed_out {
-    return false
-  }
-
-  // ---- 1. 终止条件：所有操作都线性化完 → 找到合法全序 ----
   let total = ops.length()
-  if depth == total {
-    record_progress(ctx, depth, path, state, -1, Nil)
-    return true
-  }
+  let stack : Array[DfsFrame] = [
+    {
+      depth,
+      via: -1,
+      candidates: [],
+      tried: 0,
+      node_state: state.copy(),
+      key: "",
+      first_value_fail: -1,
+      first_value_fail_expected: Nil,
+      first_illegal: -1,
+      expanded: false,
+    },
+  ]
+  while stack.length() > 0 {
+    let top = stack.length() - 1
+    let frame = stack[top]
 
-  // ---- 2. 缓存查找：该 (状态, 剩余集合) 若已证明失败，直接返回 ----
-  let key = cache_key(state, remaining)
-  match ctx.cache.get(key) {
-    Some(_) => {
-      ctx.cache_hits = ctx.cache_hits + 1
-      // 只缓存"确定失败"，所以命中即失败
-      return false
+    // ---- 0. 节点入口：记账 + 超时 + 终止 + 缓存 + 候选 ----
+    if not(frame.expanded) {
+      ctx.explored = ctx.explored + 1
+      poll_deadline(ctx)
+      if ctx.timed_out {
+        return false
+      }
+      if frame.depth == total {
+        // 找到合法全序。深层已记录最长前缀，上层记录是 no-op，可直接返回。
+        record_progress(ctx, frame.depth, path, frame.node_state, -1, Nil)
+        return true
+      }
+      let key = cache_key(frame.node_state, remaining)
+      match ctx.cache.get(key) {
+        Some(_) => {
+          ctx.cache_hits = ctx.cache_hits + 1
+          // 命中即失败：不记录进度、不写缓存
+          stack.pop() |> ignore
+          if frame.via >= 0 {
+            remaining[frame.via] = true
+            ignore(path.pop())
+          }
+          continue
+        }
+        None => ()
+      }
+      let (min_idx, min_end) = min_end_of(ops, remaining)
+      if min_idx < 0 {
+        // 防御性分支：depth < total 时必有剩余，正常不会走到
+        stack.pop() |> ignore
+        if frame.via >= 0 {
+          remaining[frame.via] = true
+          ignore(path.pop())
+        }
+        continue
+      }
+      let cands = collect_candidates(ops, remaining, min_end)
+      stack[top] = {
+        depth: frame.depth,
+        via: frame.via,
+        candidates: cands,
+        tried: 0,
+        node_state: frame.node_state,
+        key,
+        first_value_fail: -1,
+        first_value_fail_expected: Nil,
+        first_illegal: -1,
+        expanded: true,
+      }
+      continue
     }
-    None => ()
-  }
 
-  // ---- 3. 计算候选 ----
-  let (min_idx, min_end) = min_end_of(ops, remaining)
-  if min_idx < 0 {
-    // 防御性分支：depth < total 时必有剩余，正常不会走到
-    return false
-  }
-  let candidates = collect_candidates(ops, remaining, min_end)
+    // ---- 4. 按确定顺序逐个尝试候选 ----
+    if frame.tried >= frame.candidates.length() {
+      // ---- 5. 全部候选失败：记录进度（值失败优先）+ 写缓存 + 回溯 ----
+      if frame.first_value_fail >= 0 {
+        record_progress(
+          ctx,
+          frame.depth,
+          path,
+          frame.node_state,
+          frame.first_value_fail,
+          frame.first_value_fail_expected,
+        )
+      } else {
+        record_progress(
+          ctx,
+          frame.depth,
+          path,
+          frame.node_state,
+          frame.first_illegal,
+          Nil,
+        )
+      }
+      if !ctx.cache_full {
+        if ctx.cache.length() < config.max_states {
+          ctx.cache[frame.key] = true
+        } else {
+          ctx.cache_full = true
+        }
+      }
+      stack.pop() |> ignore
+      if frame.via >= 0 {
+        remaining[frame.via] = true
+        ignore(path.pop())
+      }
+      continue
+    }
 
-  // ---- 4. 按确定顺序逐个尝试 ----
-  //
-  // 失败分两类，都要进反例证据（L1）：
-  //   - `first_value_fail`：模型能执行但返回值与历史不符
-  //   - `first_illegal`：模型在此状态下拒绝执行（返回 None）
-  //
-  // 旧版只记录第一类 —— 对 counter 这类「某些转换物理不可能」的模型，
-  // 真正的肇因往往是第二类：历史里 W=3[12,20] 被实时序钉死在 W=5[0,10]
-  // 之后，而 counter 拒绝 3 <= 5 的回退。证据里只有合法的 W=5，肇事的
-  // W=3 完全不见，`check(violation.ops) == Linearizable` —— 反例链条断了。
-  //
-  // 两类都记时优先保留更深层的记录；同层里 first_value_fail 的解释信息
-  // 更丰富（有期望值可对照），所以 value_fail 优先展示。
-  let mut first_value_fail = -1
-  let mut first_value_fail_expected = Nil
-  let mut first_illegal = -1
-  let mut found = false
-  let mut i = 0
-  while i < candidates.length() && !found {
-    let idx = candidates[i]
+    let idx = frame.candidates[frame.tried]
     let op = ops[idx]
-    match model.apply(state, op.kind) {
+    let mut next_fvf = frame.first_value_fail
+    let mut next_fvf_expected = frame.first_value_fail_expected
+    let mut next_fil = frame.first_illegal
+    let mut descend : State? = None
+    match model.apply(frame.node_state, op.kind) {
       Some((next_state, expected)) =>
         if result_matches(
             model,
-            state,
+            frame.node_state,
             op.kind,
             expected,
             op.result,
             config.allow_unknown_results,
           ) {
           // 这一步合法 → 深入一层
-          remaining[idx] = false
-          path.push(idx)
-          let ok = dfs(
-            ctx,
-            model,
-            ops,
-            remaining,
-            next_state,
-            depth + 1,
-            path,
-            config,
-          )
-          ignore(path.pop())
-          remaining[idx] = true
-          if ctx.timed_out {
-            return false
-          }
-          if ok {
-            found = true
-          }
-          // 状态可执行，但模型期望的返回值与历史不符 → 该候选被剪枝
-        } else if first_value_fail < 0 {
-          first_value_fail = idx
-          first_value_fail_expected = expected
+          descend = Some(next_state)
+        } else if next_fvf < 0 {
+          // 状态可执行，但模型期望的返回值与历史不符 → 剪枝并留证据
+          next_fvf = idx
+          next_fvf_expected = expected
         }
       None =>
-        // 模型说此状态下该操作物理不可能 → 剪枝，但要留下证据
-        if first_illegal < 0 {
-          first_illegal = idx
+        // 模型说此状态下该操作物理不可能 → 剪枝并留证据
+        if next_fil < 0 {
+          next_fil = idx
         }
     }
-    i = i + 1
-  }
-
-  if found {
-    record_progress(ctx, depth, path, state, -1, Nil)
-    return true
-  }
-
-  // ---- 5. 全部候选失败：记录进度，写入缓存 ----
-  // 值不匹配优先（解释更具体）；没有值失败但有模型拒绝时用后者。
-  if first_value_fail >= 0 {
-    record_progress(
-      ctx, depth, path, state, first_value_fail, first_value_fail_expected,
-    )
-  } else {
-    record_progress(ctx, depth, path, state, first_illegal, Nil)
-  }
-  if !ctx.cache_full {
-    if ctx.cache.length() < config.max_states {
-      ctx.cache[key] = true
-    } else {
-      ctx.cache_full = true
+    stack[top] = {
+      depth: frame.depth,
+      via: frame.via,
+      candidates: frame.candidates,
+      tried: frame.tried + 1,
+      node_state: frame.node_state,
+      key: frame.key,
+      first_value_fail: next_fvf,
+      first_value_fail_expected: next_fvf_expected,
+      first_illegal: next_fil,
+      expanded: true,
+    }
+    match descend {
+      Some(next_state) => {
+        remaining[idx] = false
+        path.push(idx)
+        stack.push({
+          depth: frame.depth + 1,
+          via: idx,
+          candidates: [],
+          tried: 0,
+          node_state: next_state.copy(),
+          key: "",
+          first_value_fail: -1,
+          first_value_fail_expected: Nil,
+          first_illegal: -1,
+          expanded: false,
+        })
+      }
+      None => ()
     }
   }
   false

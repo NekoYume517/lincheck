@@ -2,7 +2,7 @@
 
 > 仓库：<https://github.com/NekoYume517/lincheck>
 > 赛事：MoonBit Hackathon 2026
-> 状态：已交付（`moon check` 0 错误 · 210 测试全绿 · CI 全绿 · wasm 构建通过）
+> 状态：已交付（`moon check` 0 错误 · 213 测试全绿 · CI 全绿 · wasm 构建通过）
 
 ---
 
@@ -58,7 +58,7 @@ counter 模型曾把 `v == current` 的幂等写也拒绝——把"单调计数�
 
 ## 5. 质量保障
 
-- **210 个测试**。其中 16 个是最早两轮的对抗性审计回归（`audit_test.mbt` 10 + `audit2_test.mbt` 6：非法区间、状态别名、缓存开关一致性、50ms 预算超时、位图跨字边界、FIFO、整数精度）；另有 23 个来自 2026-10-27 的 CLI/解析层审计（`cli_exit_code_test.mbt` 7：预算耗尽时 check/minimize/visualize 退出码一致；`cli_data_error_test.mbt` 5：坏 JSONL 必须报出行号与原因；`audit_generate_overflow_test.mbt` 4：`processes × ops` 溢出；`audit_bom_test.mbt` 7：首行 BOM 剥离及「只剥一个、只剥首行」的边界）
+- **213 个测试**（含 3 条栈深度回归：6000 操作不崩、四模型各扛 4000 操作、超预算必走 Unknown）。其中 16 个是最早两轮的对抗性审计回归（`audit_test.mbt` 10 + `audit2_test.mbt` 6：非法区间、状态别名、缓存开关一致性、50ms 预算超时、位图跨字边界、FIFO、整数精度）；另有 23 个来自 2026-10-27 的 CLI/解析层审计（`cli_exit_code_test.mbt` 7：预算耗尽时 check/minimize/visualize 退出码一致；`cli_data_error_test.mbt` 5：坏 JSONL 必须报出行号与原因；`audit_generate_overflow_test.mbt` 4：`processes × ops` 溢出；`audit_bom_test.mbt` 7：首行 BOM 剥离及「只剥一个、只剥首行」的边界）
 - **暴力全排列交叉验证**：n≤6 的历史穷举所有排列，与 WGL 结论逐一对照——这是元测试之外唯一能证明"剪枝没剪错"的手段
 - **40 例随机 fuzz**：随机 counter 历史上 `minimize` 的"未能复现"率从 33/160（修复前）降到 0
 - **两轮审查**：第一轮修复证据链断裂（L1）、静默回退（`--model reqister`）、退出码混淆；第二轮修复时间轴双打印并确认 fuzz 归零
@@ -73,7 +73,7 @@ counter 模型曾把 `v == current` 的幂等写也拒绝——把"单调计数�
 ## 7. 后续路线
 
 1. 线性化之外的性质：顺序一致性（去 happens-before 约束）、可线性化快照
-2. 更大规模历史的分片缓存（`CheckConfig.max_states` 是**缓存条目**上限，默认 20 万；超限只是停止写缓存、搜索继续——既没有 history 条数上限，也不因此返回 Unknown）
+2. 更大规模历史的分片缓存（`CheckConfig.max_states` 是**缓存条目**上限，默认 20 万；超限只是停止写缓存、搜索继续——既没有 history 条数上限，也不因此返回 Unknown）。搜索本身自 2026-11-04 起是**显式栈迭代**（见 `docs/algorithm.md` §6b）：递归版在约 2500 操作处栈溢出、退出码掉出 0..4 契约，已修
 3. 基于 fuzzing 的 history 生成（当前是模型驱动的构造式生成）
 
 ## 8. 提交信息
