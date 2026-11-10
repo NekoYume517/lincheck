@@ -154,9 +154,12 @@ moon run cmd/lincheck -- gen --model register --processes 3 --ops 10 --seed 42 -
 ```
 
 `--ops` 是**每个客户端**的操作数，所以上面这条产出 `3 × 10 = 30` 行 JSONL
-（`--processes` 是客户端数）。`--ops 0` 或 `--processes 0` 产出空历史；
-`processes × ops` 超出 Int32 会直接报用法错误（退出码 2），
-不会静默回绕成一个错误的规模。
+（`--processes` 是客户端数）。`--ops 0` 产出空历史；`--processes 0` 会被
+**钳制为 1**（生成 `--ops` 条操作，不是空历史——2026-11-10 审计 LC-A3 修正：
+旧文写「`--processes 0` 产出空历史」，与实现的钳制行为不符）；
+`processes × ops` 超出 Int32 或超出单次生成可行上限（`MAX_GENERATED_OPS`
+= 1000 万条）都直接报用法错误（退出码 2），不会静默回绕成一个错误的规模，
+也不会走进无界分配把进程挂死。
 
 输出是 JSONL，可以直接喂给 `check`。同一个 seed 两次输出**字节级相同**（有 SHA256 比对测试）。
 

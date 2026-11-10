@@ -141,6 +141,25 @@ fn[M : Model] pick_legal(
 ///
 /// 用除法而不是乘法来判定溢出：`processes > MAX / per_proc` 在两边都是
 /// 正数时与 `processes * per_proc > MAX` 等价，且自身不会溢出。
+
+///|
+/// 单次 `gen` 允许生成的操作总数上限（LC-A1，2026-11-10 审计）。
+///
+/// 为什么需要它：`total_ops_checked` 只防 Int32 回绕，`--processes
+/// 2147483647 --ops 1` 的产品是 2147483647（不越界、不回绕），随后
+/// `generate_consistent` 按这个规模分配 kinds/results/operations 三个
+/// 数组——实测 90 秒不终止（需 ~150GB），既不是用法错误也不是数据
+/// 错误，进程挂死、退出码掉出 0..4 契约。
+///
+/// 上限取 10,000,000：本项目定位是「工具级历史」——PLAN/API 里的旗舰
+/// 例子是几千到几万操作，check 侧另有时间预算兜底；一千万条历史
+/// （每条约 40–60 字节）已是数十 MB 量级，足够覆盖真实回归场景，
+/// 又不至于让生成器在分配阶段就把机器拖死。
+pub const MAX_GENERATED_OPS : Int32 = 10_000_000
+
+///|
+/// 判定「乘法不越界**且**规模在可行上限内」。超出返回 `None`，
+/// CLI 据此报用法错误（exit 2）。
 pub fn total_ops_checked(processes : Int32, ops_per_process : Int32) -> Int32? {
   let procs = if processes < 1 { 1 } else { processes }
   let per_proc = if ops_per_process < 0 { 0 } else { ops_per_process }
@@ -151,7 +170,12 @@ pub fn total_ops_checked(processes : Int32, ops_per_process : Int32) -> Int32? {
   if procs > 2147483647 / per_proc {
     return None
   }
-  Some(procs * per_proc)
+  let total = procs * per_proc
+  // 能表示 ≠ 能生成：超过可行规模同样是「参数不可用」，如实拒绝。
+  if total > MAX_GENERATED_OPS {
+    return None
+  }
+  Some(total)
 }
 
 ///|

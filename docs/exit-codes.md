@@ -82,8 +82,8 @@ They are distinguishable in two places:
 
 ```powershell
 # 数据自相矛盾：单操作，退出码仍是 1，但 reason 可编程区分
-moon run cmd/lincheck -- check --json --history fixtures/cas_bad.jsonl --model register
-# {"verdict":"non-linearizable","reason":"data-inconsistency",...}
+moon run cmd/lincheck -- check --json --history examples/cas_bad.jsonl --model register
+# {"verdict":"non-linearizable","reason":"data-inconsistency","total":1,...}
 ```
 
 ## On `visualize` and `minimize`

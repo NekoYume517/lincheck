@@ -577,8 +577,36 @@ pub fn no_explainable_witness_text(
   " 个操作 + 可解释性」约束下，没有任何子集同时满足「仍可复现违规」与「孤立非法的操作有同伴解释来源」。" +
   "原样返回全部 " +
   total.to_string() +
-  " 个操作供人工查看——这通常意味着历史数据自相矛盾（例如初值 0 上记录了 CAS 返回 true），" +
-  "而不是并发交错导致的竞态。"
+  " 个操作供人工查看。"
+}
+
+///|
+/// 同上，但按**违规成因**给下一步方向（LC-A4，2026-11-10 审计）。
+///
+/// 旧文案把 NoWitness 一律归因为「历史数据自相矛盾」，可实测里
+/// 2-op stale read（`{W=3 [0,10], Read→2 [20,30]}`，counter/set/queue
+/// 三个模型都一样）也是 NoWitness：这类反例的两个操作**各自都合法**，
+/// 但可解释性守卫要求「孤立非法的操作要有同伴解释来源」，而这对
+/// 同伴本身线性一致、pair 仍违规，于是必然被拒。把它说成「查采样/初值」
+/// 会把调试者引向错误方向，且与同历史下 `check --json` 给出的
+/// `reason: concurrency-race` 自相矛盾。
+///
+/// `reason` 取 `violation_reason()` 的两个值：`"data-inconsistency"`
+/// （见证是 depth 0 的单操作 → 数据自相矛盾）与 `"concurrency-race"`
+/// （其余 → 竞态，最小见证需人工从 check 的 witness 里读）。
+pub fn no_explainable_witness_text_for(
+  total : Int32,
+  min_witness : Int32,
+  reason : String,
+) -> String {
+  let base = no_explainable_witness_text(total, min_witness)
+  if reason == "data-inconsistency" {
+    base +
+    "这通常意味着历史数据自相矛盾（例如初值 0 上记录了 CAS 返回 true），而不是并发交错导致的竞态。"
+  } else {
+    base +
+    "注意这与「数据自相矛盾」不同：该反例属于并发竞态，压缩后的见证无法同时保留可解释的同伴操作（2-op 竞态对本身就是完整成因）。请直接看 check 输出的 witness。"
+  }
 }
 
 ///|

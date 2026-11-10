@@ -897,8 +897,16 @@ pub fn[M : Model] check_with_stats(
   }
 
   if ctx.timed_out {
+    // 与 check_with 的文案保持一致（LC-A5，2026-11-10 审计）：两个入口
+    // 对同一现象应给出同样的可诊断信息，节点数是调预算的依据。
     return (
-      Unknown("超过时间预算 " + config.time_budget_ms.to_string() + "ms"),
+      Unknown(
+        "超过时间预算 " +
+        config.time_budget_ms.to_string() +
+        "ms（已探索 " +
+        ctx.explored.to_string() +
+        " 个搜索节点）",
+      ),
       stats,
     )
   }

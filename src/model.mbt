@@ -178,13 +178,14 @@ pub fn register_model() -> RegisterModel {
 /// 状态编码：`[value]`，初始 `[0]`。
 ///
 /// 递增在历史里记录为 `Write(v)`——`v` 就是"递增之后的值"。
-/// 模型只允许严格递增（`v > 当前值`），因此任何回退的写都会被判为非法，
+/// 模型只拒绝**回退**（`v < 当前值`），幂等写（`v == 当前值`）是允许的：
+/// 写入操作存在但没有改变状态，物理上完全可能（见 apply 里的说明）。
 /// 这正是"单调"的含义，也让检查器能抓住计数器回退这类真实 bug。
 ///
 /// | 操作 | 条件 | 新状态 | 期望结果 |
 /// |---|---|---|---|
-/// | `Write(v)` | `v > value` | `[v]` | `Ok` |
-/// | `Write(v)` | `v <= value` | — | 非法（None） |
+/// | `Write(v)` | `v >= value` | `[v]` | `Ok` |
+/// | `Write(v)` | `v < value` | — | 非法（None） |
 /// | `Read` | 无 | 不变 | `Value(value)` |
 #derive(Debug)
 pub(all) struct CounterModel {}

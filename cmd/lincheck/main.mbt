@@ -442,8 +442,16 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
           "  最小化：\{original_n} 个操作里找不到可输出的最小见证（历史本身确实违规）。",
         )
         println("")
+        // **按成因给方向**（LC-A4，2026-11-10 审计）：旧文案一律说
+        // 「数据自相矛盾」，但 2-op stale read 这类竞态对同样走 NoWitness
+        // （可解释性守卫拒收「线性一致的同伴」），与 check --json 的
+        // reason=concurrency-race 自相矛盾。用同一份 check 判定分流。
+        let reason = match @lib.check(history, model, cfg) {
+          @lib.Violation(v) => @lib.violation_reason(v)
+          _ => "concurrency-race"
+        }
         println(
-          "  \{@lib.no_explainable_witness_text(original_n, @lib.MIN_WITNESS)}",
+          "  \{@lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, reason)}",
         )
       }
       EXIT_VIOLATION
@@ -564,9 +572,26 @@ fn cmd_gen(cli : Cli) -> Int32 {
   match @lib.total_ops_checked(cli.processes, cli.ops_per_process) {
     Some(_) => ()
     None => {
-      eprintln(
-        "用法错误: --processes \{cli.processes} × --ops \{cli.ops_per_process} 超出 Int32 范围，无法生成历史（每客户端 --ops 条，总数 = processes × ops）",
-      )
+      // 两条拒绝理由分开说（LC-A1，2026-11-10 审计）：Int32 回绕与
+      // 「超出可行规模」是不同的用户动作——前者要换算参数，后者要么
+      // 缩小规模、要么分批跑。混成一句会把「2147483647 × 1」这种
+      // 并不自相矛盾的输入说成「超出 Int32 范围」（它并没有）。
+      let procs = if cli.processes < 1 { 1 } else { cli.processes }
+      let per_proc = if cli.ops_per_process < 0 {
+        0
+      } else {
+        cli.ops_per_process
+      }
+      let overflowed = per_proc != 0 && procs > 2147483647 / per_proc
+      if overflowed {
+        eprintln(
+          "用法错误: --processes \{cli.processes} × --ops \{cli.ops_per_process} 超出 Int32 范围，无法生成历史（每客户端 --ops 条，总数 = processes × ops）",
+        )
+      } else {
+        eprintln(
+          "用法错误: --processes \{cli.processes} × --ops \{cli.ops_per_process} = \{procs * per_proc} 条操作，超出单次 gen 的可行上限 \{@lib.MAX_GENERATED_OPS}（生成器按总数分配数组，再多会挂死而不是报错；请缩小规模或分批生成）",
+        )
+      }
       return EXIT_USAGE
     }
   }

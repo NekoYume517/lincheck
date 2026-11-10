@@ -36,12 +36,18 @@ test "LC-9: 规模乘积校验 —— 正常值与边界值必须接受" {
   inspect(total_ops_checked(-7, 5), content="Some(5)")
   inspect(total_ops_checked(2, -3), content="Some(0)")
   inspect(total_ops_checked(1, 1000), content="Some(1000)")
-  // Int32 内最大的不溢出乘积
-  inspect(total_ops_checked(46340, 46340), content="Some(2147395600)")
-  // clamp 之后的边界：65536 × 32767 = 2^31 − 65536 = 2147418112 < 2^31，仍应接受
-  inspect(total_ops_checked(65536, 32767), content="Some(2147418112)")
   // 65536 × 32768 = 2^31，正好越界
   inspect(total_ops_checked(65536, 32768).is_empty(), content="true")
+  // **LC-A1（2026-11-10 审计）语义升级**：`total_ops_checked` 现在同时
+  // 负责「不越 Int32」与「在可行规模内」。旧断言（46340×46340 =
+  // 2147395600、65536×32767 = 2147418112 必须接受）只覆盖了前者——
+  // 这两个乘积虽不越界，但生成器按总数分配三个数组会挂死（实测
+  // 2147483647 × 1 需 ~150GB，90 秒不终止）。因此它们现在必须被拒绝，
+  // 上限由 MAX_GENERATED_OPS 给出（边界值见 audit_round6_test.mbt）。
+  inspect(total_ops_checked(46340, 46340).is_empty(), content="true")
+  inspect(total_ops_checked(65536, 32767).is_empty(), content="true")
+  // 可行上限内仍然接受
+  inspect(total_ops_checked(100, 1000), content="Some(100000)")
 }
 
 ///|
