@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub const MAX_GENERATED_OPS : Int32 = 10_000_000
+
 pub const MIN_WITNESS : Int32 = 2
 
 pub fn[M : Model] candidate_accepted(Array[Operation], Array[Operation], M, CheckConfig, Int32, Expl?) -> Bool
@@ -79,6 +81,8 @@ pub fn model_names() -> Array[String]
 pub fn model_or_default(String) -> AnyModel
 
 pub fn no_explainable_witness_text(Int32, Int32) -> String
+
+pub fn no_explainable_witness_text_for(Int32, Int32, String) -> String
 
 pub fn op_line(Operation) -> String
 
