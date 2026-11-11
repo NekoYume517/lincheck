@@ -283,20 +283,65 @@ pub fn render_violation(v : Violation, history : History) -> String {
 }
 
 ///|
-/// 列出见证子集里所有「a 在 b 之前完成」的硬顺序
+/// 列出见证子集里所有「a 在 b 之前完成」的硬顺序。
+///
+/// **输出必须与见证规模脱钩。** 顺次执行的历史里每一对都满足 `happens_before`，
+/// 事实数因此是 O(k²)：`gen --processes 4 --ops 2400 --inject` 的见证子集 k=7717，
+/// 成对事实约 5900 万行，`visualize` 会先把 wasm 堆撑爆、再以
+/// `RuntimeError: unreachable`（tlsf/prepareSize）退出——一条诊断命令在输入完全
+/// 合法时崩溃，比不输出更糟。所以这里同时给**列出的条数**和**扫描的对数**设上界，
+/// 并在截断时明写发生了什么（静默截断同样是错的）。
 pub fn order_facts(ops : Array[Operation]) -> String {
+  let fact_limit = 20
+  let scan_limit = 20_000
   let sb = StringBuilder()
-  for a in ops {
-    for b in ops {
-      // 同 build_explanation：按对象相等排除自身，id 可能重复
+  let n = ops.length()
+  let mut shown = 0
+  let mut found = 0
+  let mut scanned = 0
+  let mut stop = false
+  let mut i = 0
+  while i < n && !stop {
+    let a = ops[i]
+    let mut j = 0
+    while j < n && !stop {
+      let b = ops[j]
       if a != b && happens_before(a, b) {
-        sb.write_string("    · ")
-        sb.write_string(op_summary(a))
-        sb.write_string("(proc \{a.process}) 先于 ")
-        sb.write_string(op_summary(b))
-        sb.write_string("(proc \{b.process})：\{a.end} < \{b.start}\n")
+        found = found + 1
+        if shown < fact_limit {
+          shown = shown + 1
+          sb.write_string("    · ")
+          sb.write_string(op_summary(a))
+          sb.write_string("(proc \{a.process}) 先于 ")
+          sb.write_string(op_summary(b))
+          sb.write_string("(proc \{b.process})：\{a.end} < \{b.start}\n")
+        }
       }
+      scanned = scanned + 1
+      if scanned >= scan_limit {
+        stop = true
+      }
+      j = j + 1
     }
+    i = i + 1
+  }
+  if stop {
+    sb.write_string(
+      "    …（输出已截断：已扫描 \{scanned} 对操作，共 \{found} 条时间约束成立，",
+    )
+    sb.write_string(
+      "这里只列出前 \{shown} 条；其余成对顺序由见证子集的 `end < start` ",
+    )
+    sb.write_string(
+      "关系直接决定，可按 `--json` 的见证 id 逐对核对）\n",
+    )
+  } else if found > shown {
+    sb.write_string(
+      "    …（输出已截断：共 \{found} 条时间约束，只列出前 \{shown} 条；",
+    )
+    sb.write_string(
+      "其余由见证子集的 `end < start` 关系直接决定）\n",
+    )
   }
   sb.to_string()
 }
