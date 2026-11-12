@@ -113,3 +113,27 @@ allowed. A run whose search was cut short is "no answer", not a violation.
 
 `--budget-ms 0` (or negative) means no time limit, as documented on
 `CheckConfig`.
+
+### The budget is a checkpoint, not a hard deadline
+
+The budget is meant to be respected, but it cannot be enforced exactly: the
+deadline is only *observed* at search-node boundaries, and one node (candidate
+collection, model `apply`, cache-key construction) runs to completion. So a run
+may overshoot by the time of the nodes between the expired deadline and the
+next checkpoint — at worst one node in the dense phase, a few nodes in the
+middle tier, and up to 255 nodes once the search is past 1024 nodes.
+
+Two things this does *not* affect:
+
+- the exit code — an overshooting run is still `3` unless the search actually
+  finished, in which case its conclusion stands;
+- the parse — reading and parsing the history happens **before** the search
+  starts and is not charged to any budget. A 2.7 MB / 24000-operation history
+  costs about 2 s to parse, which dominates wall-clock time for small budgets
+  (`--budget-ms 1` finishes in ~2 s end to end even though the search itself
+  stops after 1 ms and one node).
+
+Measured on a 24000-operation history (search segment only, `register`):
+`--budget-ms 1` → 1 ms / 2 nodes, `--budget-ms 10` → 10 ms / 20 nodes,
+`--budget-ms 50` → 51 ms / 96 nodes.
+
