@@ -283,6 +283,50 @@ pub fn render_violation(v : Violation, history : History) -> String {
 }
 
 ///|
+/// 二分：`ends` 里**严格小于** `x` 的元素个数（`ends` 必须已升序）。
+fn count_ends_before(ends : Array[Int64], x : Int64) -> Int32 {
+  let mut lo = 0
+  let mut hi = ends.length()
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    if ends[mid] < x {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
+}
+
+///|
+/// 见证子集里成立的**有向**时间约束总数（`a != b && a.end < b.start`）。
+///
+/// 与 `order_facts` 的截断扫描不同，这里不做 O(k²) 的两两比较：把全部 `end`
+/// 排序后，对每条操作 `b` 二分出「有多少条 `end < b.start`」再求和，
+/// 复杂度 O(k log k)、额外内存 O(k)。这样即使扫描被截断，也能报出**真实**
+/// 总数，而不是把「扫描前缀里的命中数」冒充成总数。
+///
+/// `end < start` 的非法区间在 `check` 入口就被拦掉了；这里仍按定义减掉操作
+/// 自身，免得它把自己算成一条事实（`order_facts` 收到的是各入口筛过的操作，
+/// 但这是一条纯函数，不该依赖调用方的保证）。
+fn count_order_facts(ops : Array[Operation]) -> Int64 {
+  let ends : Array[Int64] = []
+  for op in ops {
+    ends.push(op.end)
+  }
+  ends.sort()
+  let mut total = 0L
+  for op in ops {
+    let mut c = count_ends_before(ends, op.start).to_int64()
+    if op.end < op.start {
+      c = c - 1L
+    }
+    total = total + c
+  }
+  total
+}
+
+///|
 /// 列出见证子集里所有「a 在 b 之前完成」的硬顺序。
 ///
 /// **输出必须与见证规模脱钩。** 顺次执行的历史里每一对都满足 `happens_before`，
@@ -291,6 +335,16 @@ pub fn render_violation(v : Violation, history : History) -> String {
 /// `RuntimeError: unreachable`（tlsf/prepareSize）退出——一条诊断命令在输入完全
 /// 合法时崩溃，比不输出更糟。所以这里同时给**列出的条数**和**扫描的对数**设上界，
 /// 并在截断时明写发生了什么（静默截断同样是错的）。
+///
+/// 截断摘要里的三个数字必须各自为真（2026-11-13 审计 D1）：
+///
+/// - 「扫描了多少对」= `scan_limit`，是扫描上界；
+/// - 「扫描范围内成立多少条」= 前缀命中数，**不是**整个子集的条数；
+/// - 「整个子集共有多少条」= `count_order_facts`，O(k log k) 算出。
+///
+/// 旧实现只报前两个，并把前缀命中数写成「共 N 条时间约束成立」。实测 507 条
+/// 操作的见证子集（真值 256542）被报成 19137——与同一段输出里的
+/// 「见证子集：507 / 600」自相矛盾，读者据此判断规模会差 13 倍。
 pub fn order_facts(ops : Array[Operation]) -> String {
   let fact_limit = 20
   let scan_limit = 20_000
@@ -326,18 +380,24 @@ pub fn order_facts(ops : Array[Operation]) -> String {
     i = i + 1
   }
   if stop {
+    let pairs = n.to_int64() * (n - 1).to_int64()
+    let actual = count_order_facts(ops)
     sb.write_string(
-      "    …（输出已截断：已扫描 \{scanned} 对操作，共 \{found} 条时间约束成立，",
+      "    …（输出已截断：见证子集 \{n} 个操作共 \{pairs} 对有向组合；已扫描 \{scanned} 对，",
+    )
+    sb.write_string("其中 \{found} 条时间约束成立。")
+    sb.write_string(
+      "该子集实际共有 \{actual} 条时间约束，这里只列出前 \{shown} 条；",
     )
     sb.write_string(
-      "这里只列出前 \{shown} 条；其余成对顺序由见证子集的 `end < start` ",
-    )
-    sb.write_string(
-      "关系直接决定，可按 `--json` 的见证 id 逐对核对）\n",
+      "其余成对顺序由见证子集的 `end < start` 关系直接决定，可按 `--json` 的见证 id 逐对核对）\n",
     )
   } else if found > shown {
+    // 扫描完整，`found` 本身就是子集真值；仍然用 count_order_facts 复核一遍，
+    // 两个不同算法的结果必须一致（截断分支用的是它，这里不能换口径）。
+    let actual = count_order_facts(ops)
     sb.write_string(
-      "    …（输出已截断：共 \{found} 条时间约束，只列出前 \{shown} 条；",
+      "    …（输出已截断：该子集共 \{actual} 条时间约束，只列出前 \{shown} 条；",
     )
     sb.write_string(
       "其余由见证子集的 `end < start` 关系直接决定）\n",
