@@ -197,8 +197,13 @@ test "审计：极小时间预算下大并发历史返回 Unknown 而不是挂�
       let has_budget = reason.contains("预算") || reason.contains("ms")
       inspect(has_budget, content="true")
     }
-    Linearizable => inspect(true, content="fast machine, completed")
-    Violation(_) => inspect(true, content="fast machine, completed")
+    // 预算内搜完是**允许**的（快机器），本用例要守的只是「不挂死、不崩，
+    // 且给的是三态之一」。旧实现这两条写成
+    // `inspect(true, content="fast machine, completed")`——`inspect` 的
+    // `content` 是**期望值的字符串**，于是「真的搜完了」反而会红，
+    // 而且错误信息是莫名其妙的 `true != fast machine, completed`。
+    // 那是把机器快慢当断言（2026-11-13 与 LC-7 同族修正）。
+    _ => ()
   }
 }
 
