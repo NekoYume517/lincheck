@@ -23,7 +23,12 @@ pub(all) struct Rng {
 
 ///|
 pub fn Rng::new(seed : Int32) -> Rng {
-  // 保证非零初值，避免退化
+  // 映射规则：seed=0 归一为 1；其余先 & 0x7FFFFFFF 掩掉符号位。
+  // 注意 Int32::MIN（-2147483648）掩码后恰好为 0，并不满足「初值非零」——
+  // 但 LCG 的首个 next() 即产出 12345（0 * a + c），序列立即回到正常轨道，
+  // 没有退化：任何 seed 的序列都由 (state 初值, LCG 常数) 唯一确定，
+  // 确定性不受影响（2026-11-15 审计 #6 实测 seed=Int32::MIN 两次 gen
+  // 逐字节一致）。保留现状而不强行归一，避免改变既有种子的产物。
   { state: if seed == 0 { 1 } else { seed & 0x7FFFFFFF }, }
 }
 
