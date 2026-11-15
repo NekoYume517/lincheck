@@ -63,18 +63,28 @@ pub fn clip(s : String, n : Int32) -> String {
 }
 
 ///|
-/// 时间戳 -> 列号
+/// 时间戳 -> 列号。
+///
+/// 全程走 Double，不能用 Int64 直接算 `rel * width`：画布只有几十列，但
+/// 中间量 `rel * 48` 在时间跨度超过 `Int64::MAX / 48`（≈1.9e17，纳秒时钟
+/// 约 6 年）时回绕，列号变成垃圾值，把后发生的操作画到最左边；`span =
+/// tmax - tmin` 在时间戳接近 Int64 两端时本身也会回绕成负数。Double 对
+/// ≤2^53 的时间戳精确、更大的值只有 ~1e-16 的相对误差（对 0..width 的
+/// 列号毫无影响），减法保序，因此列号在**任何**合法输入下保持先后顺序。
+///
+/// `span <= 0`（真实跨度超出 Int64 或全部同刻）时按绝对时间戳饱和降级：
+/// 列号的绝对含义失效，但「有界 + 单调」两条性质仍然成立——这是跨度信息
+/// 已经丢失后的最好结果，不引入新的静默错误。
 fn col_of(t : Int64, tmin : Int64, span : Int64, width : Int32) -> Int32 {
-  let rel = t - tmin
-  let denom : Int64 = if span <= 0L { 1L } else { span }
-  let scaled = rel * width.to_int64() / denom
-  let c = scaled.to_int()
-  if c < 0 {
+  let denom : Double = if span <= 0L { 1.0 } else { span.to_double() }
+  let rel : Double = t.to_double() - tmin.to_double()
+  let scaled = rel / denom * width.to_double()
+  if scaled <= 0.0 {
     0
-  } else if c > width {
+  } else if scaled >= width.to_double() {
     width
   } else {
-    c
+    scaled.to_int()
   }
 }
 
