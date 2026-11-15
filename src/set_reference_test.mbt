@@ -84,7 +84,10 @@ test "set membership: cached and uncached checks match independent boolean-set o
       Array::make(64, false),
       0,
     )
-    for max_states in [0, 200000] {
+    // 与 cross_reference_test 同款四档容量：1/3 会触发 cache_full 分支
+    //（容量写满后不再写入、搜索继续），0 完全关闭，200000 正常容量。
+    // set 模型此前只对拍 {0, 200000}，容量截断分支缺独立证据（2026-11-15 审计）。
+    for max_states in [0, 1, 3, 200000] {
       let config = { ..CheckConfig::default(), time_budget_ms: 0, max_states, }
       let actual = check_with(h, set_model(), config)
       assert_eq(actual is Linearizable, reference)
