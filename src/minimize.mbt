@@ -131,17 +131,32 @@ pub fn[M : Model] probe_ops(
 }
 
 ///|
-/// 判断子集是否仍违规（唯一判定依据）
+/// 判断子集是否仍违规，并把 Unknown 的原始原因带给四态入口。
+fn[M : Model] still_violates_trace(
+  ops : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  unknown : Array[String],
+) -> Bool {
+  match probe_ops(ops, model, config) {
+    Violation(_) => true
+    Linearizable => false
+    Unknown(reason) => {
+      unknown.push(reason)
+      false
+    }
+  }
+}
+
+///|
+/// 判断子集是否仍违规（唯一判定依据）。
+/// 既有 Bool API 无法表达 Unknown；需要区分三态的最小化流程使用 trace 版本。
 pub fn[M : Model] still_violates(
   ops : Array[Operation],
   model : M,
   config : CheckConfig,
 ) -> Bool {
-  let outcome = probe_ops(ops, model, config)
-  match outcome {
-    Violation(_) => true
-    _ => false
-  }
+  still_violates_trace(ops, model, config, [])
 }
 
 // ── 可解释性判定器 ────────────────────────────────────────────────────
@@ -193,6 +208,7 @@ fn[M : Model] Expl::illegal_status(
   op : Operation,
   model : M,
   config : CheckConfig,
+  unknown : Array[String],
 ) -> Bool? {
   let key = op_key(op)
   match self.illegal.get(key) {
@@ -208,7 +224,10 @@ fn[M : Model] Expl::illegal_status(
           self.illegal[key] = false
           Some(false)
         }
-        Unknown(_) => None
+        Unknown(reason) => {
+          unknown.push(reason)
+          None
+        }
       }
     }
   }
@@ -225,7 +244,43 @@ pub fn[M : Model] Expl::is_illegal(
   model : M,
   config : CheckConfig,
 ) -> Bool {
-  self.illegal_status(op, model, config).unwrap_or(false)
+  self.illegal_status(op, model, config, []).unwrap_or(false)
+}
+
+///|
+/// 两操作组合是否「能解释」：`None` = 本次检查没有结论。
+fn[M : Model] Expl::pair_status(
+  self : Expl,
+  a : Operation,
+  b : Operation,
+  model : M,
+  config : CheckConfig,
+  unknown : Array[String],
+) -> Bool? {
+  // 无序对：按指纹字典序拼接，保证 (a,b) 与 (b,a) 命中同一缓存槽
+  let ka = op_key(a)
+  let kb = op_key(b)
+  let key = if ka < kb { "\{ka}|\{kb}" } else { "\{kb}|\{ka}" }
+  match self.pairs.get(key) {
+    Some(v) => Some(v)
+    None => {
+      let pair : Array[Operation] = [a, b]
+      match probe_ops(pair, model, config) {
+        Linearizable => {
+          self.pairs[key] = true
+          Some(true)
+        }
+        Violation(_) => {
+          self.pairs[key] = false
+          Some(false)
+        }
+        Unknown(reason) => {
+          unknown.push(reason)
+          None
+        }
+      }
+    }
+  }
 }
 
 ///|
@@ -238,24 +293,7 @@ pub fn[M : Model] Expl::pair_explains(
   model : M,
   config : CheckConfig,
 ) -> Bool {
-  // 无序对：按指纹字典序拼接，保证 (a,b) 与 (b,a) 命中同一缓存槽
-  let ka = op_key(a)
-  let kb = op_key(b)
-  let key = if ka < kb { "\{ka}|\{kb}" } else { "\{kb}|\{ka}" }
-  match self.pairs.get(key) {
-    Some(v) => v
-    None => {
-      let pair : Array[Operation] = [a, b]
-      match probe_ops(pair, model, config) {
-        Unknown(_) => false
-        outcome => {
-          let v = outcome is Linearizable
-          self.pairs[key] = v
-          v
-        }
-      }
-    }
-  }
+  self.pair_status(a, b, model, config, []).unwrap_or(false)
 }
 
 ///|
@@ -264,18 +302,20 @@ pub fn[M : Model] Expl::pair_explains(
 ///
 /// 「排除自己」用**数组下标**而非 `op.id`：同 id 的不同操作是真正的同伴，
 /// 按 id 排除会把它们当自己而漏掉解释者。
-pub fn[M : Model] explainable(
+fn[M : Model] explainable_trace(
   subset : Array[Operation],
   model : M,
   config : CheckConfig,
   expl : Expl,
+  unknown : Array[String],
 ) -> Bool {
   for i, op in subset {
-    match expl.illegal_status(op, model, config) {
+    match expl.illegal_status(op, model, config, unknown) {
       Some(true) => {
         let mut explained = false
         for j, other in subset {
-          if j != i && expl.pair_explains(op, other, model, config) {
+          if j != i &&
+            expl.pair_status(op, other, model, config, unknown).unwrap_or(false) {
             explained = true
           }
         }
@@ -292,7 +332,43 @@ pub fn[M : Model] explainable(
 }
 
 ///|
-/// 单次候选判定：够大 + 更小 + 仍违规 + （可选）可解释
+/// 既有 Bool 入口；Unknown 时保守返回 false，原始原因由 trace 入口保留。
+pub fn[M : Model] explainable(
+  subset : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  expl : Expl,
+) -> Bool {
+  explainable_trace(subset, model, config, expl, [])
+}
+
+///|
+/// 单次候选判定：够大 + 更小 + 仍违规 + （可选）可解释。
+fn[M : Model] candidate_accepted_trace(
+  current : Array[Operation],
+  candidate : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+  expl : Expl?,
+  unknown : Array[String],
+) -> Bool {
+  let big_enough = candidate.length() >= min_witness
+  let smaller = candidate.length() < current.length()
+  if !big_enough || !smaller {
+    return false
+  }
+  if !still_violates_trace(candidate, model, config, unknown) {
+    return false
+  }
+  match expl {
+    Some(e) => explainable_trace(candidate, model, config, e, unknown)
+    None => true
+  }
+}
+
+///|
+/// 既有 Bool 入口；四态最小化使用 trace 版本。
 pub fn[M : Model] candidate_accepted(
   current : Array[Operation],
   candidate : Array[Operation],
@@ -301,31 +377,29 @@ pub fn[M : Model] candidate_accepted(
   min_witness : Int32,
   expl : Expl?,
 ) -> Bool {
-  let big_enough = candidate.length() >= min_witness
-  let smaller = candidate.length() < current.length()
-  if !big_enough || !smaller {
-    return false
-  }
-  if !still_violates(candidate, model, config) {
-    return false
-  }
-  match expl {
-    Some(e) => explainable(candidate, model, config, e)
-    None => true
-  }
+  candidate_accepted_trace(
+    current,
+    candidate,
+    model,
+    config,
+    min_witness,
+    expl,
+    [],
+  )
 }
 
 ///|
 /// delta debugging 主体。
 ///
 /// min_witness 是最小操作数下界；expl 为 None 时退化成经典 ddmin。
-pub fn[M : Model] ddmin_bounded(
+fn[M : Model] ddmin_bounded_trace(
   initial : Array[Operation],
   model : M,
   config : CheckConfig,
   max_rounds : Int32,
   min_witness : Int32,
   expl : Expl?,
+  unknown : Array[String],
 ) -> Array[Operation] {
   let mut current = initial.copy()
   let mut rounds = 0
@@ -339,8 +413,8 @@ pub fn[M : Model] ddmin_bounded(
       let mut found = false
       while i < current.length() && !found {
         let candidate = remove_chunk(current, i, chunk)
-        if candidate_accepted(
-            current, candidate, model, config, min_witness, expl,
+        if candidate_accepted_trace(
+            current, candidate, model, config, min_witness, expl, unknown,
           ) {
           current = candidate
           found = true
@@ -356,6 +430,19 @@ pub fn[M : Model] ddmin_bounded(
     }
   }
   current
+}
+
+///|
+/// 既有 ddmin 入口；需要区分「没缩小」与「探针未知」时使用 trace 版本。
+pub fn[M : Model] ddmin_bounded(
+  initial : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  max_rounds : Int32,
+  min_witness : Int32,
+  expl : Expl?,
+) -> Array[Operation] {
+  ddmin_bounded_trace(initial, model, config, max_rounds, min_witness, expl, [])
 }
 
 ///|
@@ -382,14 +469,15 @@ fn[M : Model] witness_ok(
   config : CheckConfig,
   min_witness : Int32,
   expl : Expl,
+  unknown : Array[String],
 ) -> Bool {
   if cand.length() < min_witness {
     return false
   }
-  if !still_violates(cand, model, config) {
+  if !still_violates_trace(cand, model, config, unknown) {
     return false
   }
-  explainable(cand, model, config, expl)
+  explainable_trace(cand, model, config, expl, unknown)
 }
 
 ///|
@@ -406,6 +494,7 @@ fn[M : Model] first_ok_subset(
   expl : Expl,
   size : Int32,
   cap : Int32,
+  unknown : Array[String],
 ) -> Array[Operation]? {
   let n = pool.length()
   if size <= 0 || size > n || n > cap {
@@ -423,7 +512,7 @@ fn[M : Model] first_ok_subset(
     for k in idx {
       cand.push(pool[k])
     }
-    if witness_ok(cand, model, config, min_witness, expl) {
+    if witness_ok(cand, model, config, min_witness, expl, unknown) {
       return Some(cand)
     }
     // 推进到下一个组合（字典序，保证确定性）
@@ -460,6 +549,59 @@ fn[M : Model] first_ok_subset(
 /// 4. 全部失败返回 `None`：**如实报告**，绝不输出退化解。
 ///
 /// 第 1 步覆盖了绝大多数历史，因此正常调用不会触发组合枚举。
+fn[M : Model] minimal_witness_trace(
+  seed : Array[Operation],
+  pool : Array[Operation],
+  model : M,
+  config : CheckConfig,
+  min_witness : Int32,
+  expl : Expl,
+  unknown : Array[String],
+) -> Array[Operation]? {
+  let from_seed = ddmin_bounded_trace(
+    seed,
+    model,
+    config,
+    200,
+    min_witness,
+    Some(expl),
+    unknown,
+  )
+  if witness_ok(from_seed, model, config, min_witness, expl, unknown) {
+    return Some(from_seed)
+  }
+  if min_witness <= 2 {
+    match
+      first_ok_subset(pool, model, config, min_witness, expl, 2, 48, unknown) {
+      Some(found) => return Some(found)
+      None => ()
+    }
+  }
+  if min_witness <= 3 {
+    match
+      first_ok_subset(pool, model, config, min_witness, expl, 3, 14, unknown) {
+      Some(found) => return Some(found)
+      None => ()
+    }
+  }
+  let from_pool = ddmin_bounded_trace(
+    pool,
+    model,
+    config,
+    200,
+    min_witness,
+    Some(expl),
+    unknown,
+  )
+  if witness_ok(from_pool, model, config, min_witness, expl, unknown) {
+    return Some(from_pool)
+  }
+  None
+}
+
+///|
+/// 既有可空入口。签名只能表达「找到 / 没找到」，Unknown 仍按找不到处理；
+/// 四态入口通过 `minimal_witness_trace` 保留 Unknown，不会误报 NoWitness。
 pub fn[M : Model] minimal_witness(
   seed : Array[Operation],
   pool : Array[Operation],
@@ -468,41 +610,7 @@ pub fn[M : Model] minimal_witness(
   min_witness : Int32,
   expl : Expl,
 ) -> Array[Operation]? {
-  let from_seed = ddmin_bounded(
-    seed,
-    model,
-    config,
-    200,
-    min_witness,
-    Some(expl),
-  )
-  if witness_ok(from_seed, model, config, min_witness, expl) {
-    return Some(from_seed)
-  }
-  if min_witness <= 2 {
-    match first_ok_subset(pool, model, config, min_witness, expl, 2, 48) {
-      Some(found) => return Some(found)
-      None => ()
-    }
-  }
-  if min_witness <= 3 {
-    match first_ok_subset(pool, model, config, min_witness, expl, 3, 14) {
-      Some(found) => return Some(found)
-      None => ()
-    }
-  }
-  let from_pool = ddmin_bounded(
-    pool,
-    model,
-    config,
-    200,
-    min_witness,
-    Some(expl),
-  )
-  if witness_ok(from_pool, model, config, min_witness, expl) {
-    return Some(from_pool)
-  }
-  None
+  minimal_witness_trace(seed, pool, model, config, min_witness, expl, [])
 }
 
 ///|
@@ -704,14 +812,16 @@ fn[M : Model] minimize_outcome_opt(
         })
       } else {
         let expl = Expl::new()
+        let unknown : Array[String] = []
         match
-          minimal_witness(
+          minimal_witness_trace(
             seed,
             history.operations,
             model,
             config,
             min_witness,
             expl,
+            unknown,
           ) {
           Some(minimal) => {
             let depth = match probe_ops(minimal, model, config) {
@@ -726,7 +836,15 @@ fn[M : Model] minimize_outcome_opt(
               ),
             })
           }
-          None => NoWitness
+          None =>
+            if unknown.length() > 0 {
+              // 没找到见证的证据本身不完整：只能说最小化未完成，不能声称
+              // 满足约束的见证不存在。首轮 Violation 仍然成立，但这里描述的是
+              // 最小化搜索的状态，不是把原历史改判成 Linearizable。
+              Inconclusive(unknown[0])
+            } else {
+              NoWitness
+            }
         }
       }
     }

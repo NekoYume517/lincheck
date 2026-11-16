@@ -223,6 +223,12 @@ pub fn[M : Model] minimal_witness(
 该返回值上不可区分，CLI 曾因此把一次没跑完的搜索渲染成 `✗ NON-LINEARIZABLE`
 + exit 1。需要按退出码区分三态的调用方必须用 `minimize_outcome`。
 
+`Inconclusive` 也覆盖「首轮检查已证明违规，但后续最小化探针耗尽预算」的情况：
+此时只能说最小化未完成，不得返回 `NoWitness` 并声称合格见证不存在。
+`minimal_witness` 的 `Array[Operation]?` 签名同样无法区分这两种情况；需要这个
+区别的调用方必须使用四态入口。单操作与操作对的可解释性缓存只保存确定的
+`Linearizable` / `Violation`，不缓存 `Unknown`。
+
 **最终返回值的三重约束**（`witness_ok`，缺一不可）：
 
 1. `ops.length() >= min_witness`（默认 `MIN_WITNESS = 2`）
