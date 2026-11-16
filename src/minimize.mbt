@@ -922,13 +922,14 @@ pub fn[M : Model] minimize_with_bound(
 }
 
 ///|
-/// 按进程分组 + 逐操作的最小化（泛型版，`None` = 找不到合格见证）
-pub fn[M : Model] minimize_by_process_opt(
+/// 按进程分组 + 逐操作的最小化实现。配置注入仅供内部复用与低成本测试；
+/// 公开入口始终传 `CheckConfig::default()`，公开 API 与行为不变。
+fn[M : Model] minimize_by_process_opt_with_config(
   history : History,
   model : M,
+  config : CheckConfig,
   min_witness : Int32,
 ) -> Violation? {
-  let config = CheckConfig::default()
   let original_n = history.length()
   let outcome = check_with(history, model, config)
   match outcome {
@@ -1022,6 +1023,21 @@ pub fn[M : Model] minimize_by_process_opt(
       }
     }
   }
+}
+
+///|
+/// 按进程分组 + 逐操作的最小化（泛型版，`None` = 找不到合格见证）。
+pub fn[M : Model] minimize_by_process_opt(
+  history : History,
+  model : M,
+  min_witness : Int32,
+) -> Violation? {
+  minimize_by_process_opt_with_config(
+    history,
+    model,
+    CheckConfig::default(),
+    min_witness,
+  )
 }
 
 ///|

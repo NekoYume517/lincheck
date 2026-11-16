@@ -1,75 +1,26 @@
 // minimize_by_process 的 Unknown 镜像回归。
 //
-// 该公开入口固定使用默认 5000ms 预算。模型只在首轮两次 apply 保持快速，
-// 后续 apply 等待 5100ms，因而约五个后续探针各超时一次；测试约 25 秒，
-// 换来不依赖机器速度的「首轮 Violation、后续全部 Unknown」确定性。
-
-///|
-struct ProcessTimeoutRegister {
-  applications : Array[Int32]
-}
-
-///|
-pub impl Model for ProcessTimeoutRegister with fn name(_self) {
-  "process-timeout-register"
-}
-
-///|
-pub impl Model for ProcessTimeoutRegister with fn init(_self) {
-  [0]
-}
-
-///|
-pub impl Model for ProcessTimeoutRegister with fn apply(self, state, kind) {
-  self.applications[0] = self.applications[0] + 1
-  if self.applications[0] > 2 {
-    let until = @env.now() + 5100UL
-    while @env.now() < until {
-
-    }
-  }
-  register_model().apply(state, kind)
-}
-
-///|
-pub impl Model for ProcessTimeoutRegister with fn state_eq(_self, a, b) {
-  states_equal(a, b)
-}
-
-///|
-pub impl Model for ProcessTimeoutRegister with fn state_hash(_self, state) {
-  poly_hash(state)
-}
+// 私有 config helper 与公开入口共用同一实现；公开入口仍固定传默认配置。
+// 测试复用 TimeoutRegister：首轮两次 apply 快速，后续 apply 各等待 50ms，
+// 在 10ms 预算下确定超时。约五个探针总计 250ms，不再忙等 25 秒。
 
 ///|
 test "minimize_by_process: 后续 Unknown 不得伪报不存在见证" {
-  let h = History::{
-    operations: [
-      Operation::{
-        id: 0,
-        process: 0,
-        kind: Write(2),
-        result: Ok,
-        start: 0L,
-        end: 10L,
-      },
-      Operation::{
-        id: 1,
-        process: 1,
-        kind: Read,
-        result: Value(0),
-        start: 20L,
-        end: 30L,
-      },
-    ],
+  let h = timeout_pair()
+  let config = CheckConfig::{
+    time_budget_ms: 10,
+    max_states: 200000,
+    allow_unknown_results: false,
   }
-  assert_true(check_default(h, Register(register_model())) is Violation(_))
-  let result = minimize_by_process_with(
-    h,
-    ProcessTimeoutRegister::{ applications: [0], },
-    MIN_WITNESS,
-  )
-  assert_true(result.explanation.contains("检查未能给出结论"))
-  assert_true(result.explanation.contains("超过时间预算"))
-  assert_true(!result.explanation.contains("没有任何子集"))
+  let unlimited = CheckConfig::{ ..config, time_budget_ms: 0, }
+  assert_true(check_with(h, register_model(), unlimited) is Violation(_))
+  let model = TimeoutRegister::{ applications: [0], fast_applications: 2, }
+  match minimize_by_process_opt_with_config(h, model, config, MIN_WITNESS) {
+    Some(result) => {
+      assert_true(result.explanation.contains("检查未能给出结论"))
+      assert_true(result.explanation.contains("超过时间预算"))
+      assert_true(!result.explanation.contains("没有任何子集"))
+    }
+    None => fail("后续探针 Unknown 被误报成不存在见证")
+  }
 }
