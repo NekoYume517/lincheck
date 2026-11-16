@@ -226,8 +226,9 @@ pub fn[M : Model] minimal_witness(
 `Inconclusive` 也覆盖「首轮检查已证明违规，但后续最小化探针耗尽预算」的情况：
 此时只能说最小化未完成，不得返回 `NoWitness` 并声称合格见证不存在。
 `minimal_witness` 的 `Array[Operation]?` 签名同样无法区分这两种情况；需要这个
-区别的调用方必须使用四态入口。单操作与操作对的可解释性缓存只保存确定的
-`Linearizable` / `Violation`，不缓存 `Unknown`。最小化结语只有在每个单操作
+区别的调用方必须使用四态入口。`minimize_by_process` 的旧 `Violation` 载体
+也把后续 Unknown 写成「检查未能给出结论，无法最小化」，不伪装成无见证。
+单操作与操作对的可解释性缓存只保存确定的 `Linearizable` / `Violation`，不缓存 `Unknown`。最小化结语只有在每个单操作
 删除复验都明确返回 `Linearizable` 时，才能声称「删掉任何一个都会变回线性
 一致」；删除复验为 `Unknown` 时必须保留不确定说明，不能把它当成确定合法。
 

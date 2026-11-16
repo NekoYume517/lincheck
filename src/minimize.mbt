@@ -948,6 +948,7 @@ pub fn[M : Model] minimize_by_process_opt(
     Violation(v) => {
       let seed = seed_of(history, v)
       let expl = Expl::new()
+      let unknown : Array[String] = []
       // 第一步：收集出现过的进程号（升序，保证确定性）
       let procs : Array[Int32] = []
       for op in seed {
@@ -971,28 +972,40 @@ pub fn[M : Model] minimize_by_process_opt(
             rest.push(op)
           }
         }
-        if candidate_accepted(
+        if candidate_accepted_trace(
             current,
             rest,
             model,
             config,
             min_witness,
             Some(expl),
+            unknown,
           ) {
           current = rest
         }
       }
       // 第三步：逐操作细粒度砍（种子不合格时以整份历史为起点重新找见证）
-      let witness = minimal_witness(
+      let witness = minimal_witness_trace(
         current,
         history.operations,
         model,
         config,
         min_witness,
         expl,
+        unknown,
       )
       match witness {
-        None => None
+        None =>
+          if unknown.length() > 0 {
+            Some(
+              no_witness(
+                history.operations,
+                "检查未能给出结论（\{unknown[0]}），无法最小化；返回全部操作供人工查看。",
+              ),
+            )
+          } else {
+            None
+          }
         Some(minimal) => {
           let depth = match probe_ops(minimal, model, config) {
             Violation(v2) => v2.depth
