@@ -673,16 +673,26 @@ fn[M : Model] explain_minimal(
     sb.write_string(op_line(op))
     sb.write_string("\n")
   }
-  // 逐条复验：删掉第 i 条后是否仍违规（i 用下标，同 id 操作各自可删）
+  // 逐条复验：删掉第 i 条后的完整三态（i 用下标，同 id 操作各自可删）。
+  // Unknown 不是 Linearizable：只要有一个删除方向没查完，就不能声称
+  // 「删掉任何一条都会变合法」。见证本身已经验证违规，因此这里只收窄结语，
+  // 不推翻整个 MinViolation。
   let mut any_remains = false
+  let mut any_unknown = false
   for i, _ in ops {
-    if still_violates(remove_chunk(ops, i, 1), model, config) {
-      any_remains = true
+    match probe_ops(remove_chunk(ops, i, 1), model, config) {
+      Violation(_) => any_remains = true
+      Linearizable => ()
+      Unknown(_) => any_unknown = true
     }
   }
   if any_remains {
     sb.write_string(
       "在最少保留这么多个操作的约束下无法继续缩减：存在删掉某一条后仍违规的方向，但继续缩减会跌破最小见证下界或破坏可解释性。",
+    )
+  } else if any_unknown {
+    sb.write_string(
+      "删除复验存在结论未知（Unknown）的方向：当前见证仍可复现违规，但不能确认删掉其中任何一个操作都会变回线性一致。",
     )
   } else {
     sb.write_string(

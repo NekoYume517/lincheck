@@ -133,3 +133,35 @@ test "minimize unknown: 后续探针超时不得伪报不存在见证" {
   assert_true(result.explanation.contains("超过时间预算"))
   assert_true(!result.explanation.contains("没有任何子集"))
 }
+
+///|
+test "minimize unknown: 删除复验 Unknown 不得声称必然变合法" {
+  let h = timeout_pair()
+  let config = CheckConfig::{
+    time_budget_ms: 10,
+    max_states: 200000,
+    allow_unknown_results: false,
+  }
+  let unlimited = CheckConfig::{ ..config, time_budget_ms: 0, }
+  assert_true(check_with(h, register_model(), unlimited) is Violation(_))
+  // 首轮、见证、可解释性和 depth 复核共消耗 8 次快速 apply；随后两次
+  // 删除复验都超时。历史与见证均已确定，但「删后必合法」没有证据。
+  let model = TimeoutRegister::{ applications: [0], fast_applications: 8, }
+  match minimize_outcome_opt(h, model, config, MIN_WITNESS) {
+    MinViolation(v) => {
+      assert_true(
+        probe_ops(remove_chunk(h.operations, 0, 1), model, config) is Unknown(_),
+      )
+      assert_true(
+        probe_ops(remove_chunk(h.operations, 1, 1), model, config) is Unknown(_),
+      )
+      assert_true(
+        !v.explanation.contains(
+          "删掉其中任何一个操作，历史都会变回线性一致",
+        ),
+      )
+      assert_true(v.explanation.contains("未知"))
+    }
+    _ => fail("前 8 次快速 apply 应足以得到确定见证")
+  }
+}

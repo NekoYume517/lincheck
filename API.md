@@ -227,7 +227,9 @@ pub fn[M : Model] minimal_witness(
 此时只能说最小化未完成，不得返回 `NoWitness` 并声称合格见证不存在。
 `minimal_witness` 的 `Array[Operation]?` 签名同样无法区分这两种情况；需要这个
 区别的调用方必须使用四态入口。单操作与操作对的可解释性缓存只保存确定的
-`Linearizable` / `Violation`，不缓存 `Unknown`。
+`Linearizable` / `Violation`，不缓存 `Unknown`。最小化结语只有在每个单操作
+删除复验都明确返回 `Linearizable` 时，才能声称「删掉任何一个都会变回线性
+一致」；删除复验为 `Unknown` 时必须保留不确定说明，不能把它当成确定合法。
 
 **最终返回值的三重约束**（`witness_ok`，缺一不可）：
 
