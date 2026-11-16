@@ -305,8 +305,10 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
 ```
 
 `--ops` 是**每个客户端**的操作数，总操作数 = `processes × ops`；
-`--processes 3 --ops 10` 因此产出 30 条。该乘积超出 Int32 时 `gen` 报用法错误
-（退出码 `2`），不静默回绕（见 `total_ops_checked`）。
+`--processes 3 --ops 10` 因此产出 30 条。该乘积超出 Int32 或超过
+`MAX_GENERATED_OPS` 时，`gen` 与 `selfcheck` 都报用法错误（退出码 `2`），
+不静默回绕，也不把生成器兜底的空历史当成一次通过的 selfcheck
+（见 `total_ops_checked`）。
 
 退出码：0 线性一致，1 发现违规，2 用法错误，3 未知，4 输入数据错误。
 

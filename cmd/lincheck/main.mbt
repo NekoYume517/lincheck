@@ -623,6 +623,17 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
     Some(m) => m
     None => return EXIT_USAGE
   }
+  // 与 gen 共用同一份规模校验。库层生成器对不可用规模的兜底是空历史，
+  // CLI 若不在此拒绝，会把「一个操作都没生成」渲染成 PASS + exit 0。
+  match @lib.total_ops_checked(cli.processes, cli.ops_per_process) {
+    Some(_) => ()
+    None => {
+      eprintln(
+        "用法错误: selfcheck 的 --processes \{cli.processes} × --ops \{cli.ops_per_process} 超出可用范围（乘积不得溢出 Int32，且总数不得超过 \{@lib.MAX_GENERATED_OPS}）",
+      )
+      return EXIT_USAGE
+    }
+  }
   let total = if cli.seeds < 1 { 1 } else { cli.seeds }
   let mut seed = 1
   let mut failed = 0

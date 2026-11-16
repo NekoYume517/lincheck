@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 230 个测试
+moon test      # 231 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 230, passed: 230, failed: 0.`
+预期：`Total tests: 231, passed: 231, failed: 0.`
 
 ## 二、看核心判定
 
@@ -135,6 +135,10 @@ selfcheck  model=register  seeds=300  ops/seed=4
   · 注入违规被发现：300 / 300
 结果：PASS
 ```
+
+`selfcheck` 与 `gen` 共用 `total_ops_checked`：`processes × ops` 溢出 Int32 或超过
+`MAX_GENERATED_OPS` 时返回用法错误（退出码 `2`），不会把生成器兜底的空历史
+误报成 `PASS`。`--processes 0` 仍按生成器既有规则钳制为 1。
 
 **这条元测试能验证到哪一层**：
 
