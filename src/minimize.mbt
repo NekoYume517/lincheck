@@ -183,26 +183,49 @@ pub fn Expl::new() -> Expl {
 }
 
 ///|
-/// 单个操作是否孤立非法（带缓存）
+/// 单个操作是否孤立非法：`None` = 本次检查没有结论。
+///
+/// 只有 Linearizable / Violation 才能写入确定结果缓存。Unknown 既不是合法，
+/// 也不是违规；若把它按 false 缓存，后续可解释性检查会把证据不足误当成
+/// 「这条操作单独看没有问题」，从而跳过寻找同伴的守卫。
+fn[M : Model] Expl::illegal_status(
+  self : Expl,
+  op : Operation,
+  model : M,
+  config : CheckConfig,
+) -> Bool? {
+  let key = op_key(op)
+  match self.illegal.get(key) {
+    Some(v) => Some(v)
+    None => {
+      let single : Array[Operation] = [op]
+      match probe_ops(single, model, config) {
+        Violation(_) => {
+          self.illegal[key] = true
+          Some(true)
+        }
+        Linearizable => {
+          self.illegal[key] = false
+          Some(false)
+        }
+        Unknown(_) => None
+      }
+    }
+  }
+}
+
+///|
+/// 单个操作是否孤立非法（带缓存）。
+///
+/// 保留既有 Bool API：Unknown 不能断言「孤立非法」，因此返回 false；调用方
+/// 若要用它证明可解释性，必须走 `illegal_status` 以保留第三种状态。
 pub fn[M : Model] Expl::is_illegal(
   self : Expl,
   op : Operation,
   model : M,
   config : CheckConfig,
 ) -> Bool {
-  let key = op_key(op)
-  match self.illegal.get(key) {
-    Some(v) => v
-    None => {
-      let single : Array[Operation] = [op]
-      let v = match probe_ops(single, model, config) {
-        Violation(_) => true
-        _ => false
-      }
-      self.illegal[key] = v
-      v
-    }
-  }
+  self.illegal_status(op, model, config).unwrap_or(false)
 }
 
 ///|
@@ -248,16 +271,21 @@ pub fn[M : Model] explainable(
   expl : Expl,
 ) -> Bool {
   for i, op in subset {
-    if expl.is_illegal(op, model, config) {
-      let mut explained = false
-      for j, other in subset {
-        if j != i && expl.pair_explains(op, other, model, config) {
-          explained = true
+    match expl.illegal_status(op, model, config) {
+      Some(true) => {
+        let mut explained = false
+        for j, other in subset {
+          if j != i && expl.pair_explains(op, other, model, config) {
+            explained = true
+          }
+        }
+        if !explained {
+          return false
         }
       }
-      if !explained {
-        return false
-      }
+      Some(false) => ()
+      // 单操作本身尚未判明，不能据此证明整个子集可解释。
+      None => return false
     }
   }
   true
