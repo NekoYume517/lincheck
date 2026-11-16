@@ -140,19 +140,12 @@ test "时间约束：极值/零长/重复 id 的计数与独立 O(n²) 一致" {
 }
 
 ///|
-fn edge_precision_row(
-  start : String,
-  end : String,
-) -> Result[History, HistoryError] {
-  History::from_jsonl(
-    "{\"id\":0,\"process\":0,\"kind\":{\"tag\":\"Read\"},\"result\":{\"tag\":\"Value\",\"value\":0},\"start\":" +
-    start +
-    ",\"end\":" +
-    end +
-    "}",
-  ) catch {
-    _ => Err(BadLine(-1, "unexpected exception"))
-  }
+fn edge_precision_json(start : String, end : String) -> String {
+  "{\"id\":0,\"process\":0,\"kind\":{\"tag\":\"Read\"},\"result\":{\"tag\":\"Value\",\"value\":0},\"start\":" +
+  start +
+  ",\"end\":" +
+  end +
+  "}"
 }
 
 ///|
@@ -167,7 +160,7 @@ test "JSON：更多 Int64 十进制边界与独立期望值一致" {
       ("1000000000000000000000000000000e-30", 1L),
       ("-0.000e-999999999999999999", 0L),
     ] {
-    match edge_precision_row(pair.0, pair.0) {
+    match History::from_jsonl(edge_precision_json(pair.0, pair.0)) {
       Ok(h) => {
         assert_eq(h.operations[0].start, pair.1)
         assert_eq(h.operations[0].end, pair.1)
@@ -180,7 +173,9 @@ test "JSON：更多 Int64 十进制边界与独立期望值一致" {
       "92233720368547758080e-1", "-92233720368547758090e-1", "90071992547409930001e-4",
       "9223372036854775807.000000000000000001", "1.000000000000000001", "10e999999999999999999",
     ] {
-    assert_true(edge_precision_row(invalid, invalid) is Err(_))
+    assert_true(
+      History::from_jsonl(edge_precision_json(invalid, invalid)) is Err(_),
+    )
   }
 }
 
