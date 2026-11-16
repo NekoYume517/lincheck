@@ -102,14 +102,19 @@ verdict, use `check`.
 ### `--budget-ms` applies to all three commands
 
 `check`, `minimize` and `visualize` all accept `--budget-ms`, and all three use
-exactly the budget you pass — including the re-confirmation step inside
-`minimize`. Given the same history and the same budget they reach the same
-verdict and the same exit code.
+exactly the budget you pass — including every candidate check and re-confirmation
+inside `minimize`. The budget applies **separately to each search/probe**; it is
+not one shared wall-clock allowance for the whole minimize command.
 
 That matters for the `1` / `3` split above. If a budget is too small for the
-search, the honest answer is `3` from every command; no command may substitute
-a longer default budget and report a conclusion the caller's budget never
-allowed. A run whose search was cut short is "no answer", not a violation.
+search, the honest answer is `3`; no command may substitute a longer default
+budget. A run whose search was cut short is "no answer", not a violation.
+`check` and `visualize` perform one search and therefore agree on the same input.
+`minimize` may already have proved the original history violating and then hit
+`Unknown` in a later probe; it must report `3` for the unfinished minimization,
+not claim that no witness exists. Conversely, an already confirmed witness stays
+confirmed if only a later deletion check is unknown, but its explanation must not
+claim that every deletion was proved linearizable.
 
 `--budget-ms 0` (or negative) means no time limit, as documented on
 `CheckConfig`.
