@@ -618,21 +618,48 @@ fn cmd_gen(cli : Cli) -> Int32 {
 // ── selfcheck ─────────────────────────────────────────────────────────
 
 ///|
+/// `selfcheck` 的规模必须「可生成**且**非空」。
+///
+/// `total_ops_checked` 的公开语义保持不变（`Some(0)` 是合法输入：`gen --ops 0`
+/// 的契约就是产出空历史，见 `docs/DEMO.md`）。但 `selfcheck` 是元测试，
+/// 0 条操作意味着**一条历史都没生成、一次检查都没做**，此时打印
+/// 「合法历史全部通过」是虚假结论——`API.md` §7 明文禁止把生成器兜底的空历史
+/// 当成一次通过的 selfcheck。
+///
+/// 0 有两个来源，都必须拒绝：`--ops 0`；以及 `--ops` 为负（`total_ops_checked`
+/// 按既有规则把负值钳成 0）。
+fn selfcheck_scale(cli : Cli) -> Int32? {
+  match @lib.total_ops_checked(cli.processes, cli.ops_per_process) {
+    Some(total) =>
+      if total >= 1 {
+        Some(total)
+      } else {
+        eprintln(
+          "用法错误: selfcheck 的 --processes \{cli.processes} × --ops \{cli.ops_per_process} 生成 0 个操作——一条历史都没生成，元测试无法验证任何东西；--ops 必须 ≥ 1（0 与负值都会生成空历史）",
+        )
+        None
+      }
+    None => {
+      eprintln(
+        "用法错误: selfcheck 的 --processes \{cli.processes} × --ops \{cli.ops_per_process} 超出可用范围（乘积不得溢出 Int32，且总数不得超过 \{@lib.MAX_GENERATED_OPS}）",
+      )
+      None
+    }
+  }
+}
+
+///|
 fn cmd_selfcheck(cli : Cli) -> Int32 {
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
   }
-  // 与 gen 共用同一份规模校验。库层生成器对不可用规模的兜底是空历史，
-  // CLI 若不在此拒绝，会把「一个操作都没生成」渲染成 PASS + exit 0。
-  match @lib.total_ops_checked(cli.processes, cli.ops_per_process) {
+  // 与 gen 共用同一份规模校验，并额外要求「至少一个操作」。
+  // 库层生成器对不可用规模（含 0 条）的兜底是空历史；CLI 若不在此拒绝，
+  // 会把「一个操作都没生成」渲染成 PASS + exit 0。
+  match selfcheck_scale(cli) {
     Some(_) => ()
-    None => {
-      eprintln(
-        "用法错误: selfcheck 的 --processes \{cli.processes} × --ops \{cli.ops_per_process} 超出可用范围（乘积不得溢出 Int32，且总数不得超过 \{@lib.MAX_GENERATED_OPS}）",
-      )
-      return EXIT_USAGE
-    }
+    None => return EXIT_USAGE
   }
   let total = if cli.seeds < 1 { 1 } else { cli.seeds }
   let mut seed = 1
