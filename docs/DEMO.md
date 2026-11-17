@@ -22,11 +22,11 @@ moon version
 
 ```bash
 moon check
-moon test      # 261 个测试
+moon test      # 265 个测试
 moon build --target wasm
 ```
 
-预期：`Total tests: 261, passed: 261, failed: 0.`
+预期：`Total tests: 265, passed: 265, failed: 0.`
 
 ## 二、看核心判定
 
@@ -176,9 +176,17 @@ moon run cmd/lincheck -- gen --model register --processes 3 --ops 10 --seed 42 -
 （`--processes` 是客户端数）。`--ops 0` 产出空历史；`--processes 0` 会被
 **钳制为 1**（生成 `--ops` 条操作，不是空历史——2026-11-10 审计 LC-A3 修正：
 旧文写「`--processes 0` 产出空历史」，与实现的钳制行为不符）；
+`--ops` / `--processes` 取**负数**是用法错误（退出码 2，2026-11-17-b 审计 LC-14：
+负值曾被钳成 0/1，`--ops -1` 于是产出一份空历史并 exit 0，交给 `check` 会得到
+`{"verdict":"linearizable","ops":0}` 的「通过」空结果）；
 `processes × ops` 超出 Int32 或超出单次生成可行上限（`MAX_GENERATED_OPS`
 = 1000 万条）都直接报用法错误（退出码 2），不会静默回绕成一个错误的规模，
 也不会走进无界分配把进程挂死。
+
+`--concurrency` 只影响**跨进程**的重叠：它把相邻操作的区间随机拉宽，而同一
+客户端的下一条必须等上一条返回之后才开始（2026-11-17 审计 LC-6，一个客户端
+不可能有两个在途操作）。所以 `--processes 1` 时产物恒为串行历史，
+`--concurrency 1` 只是把区间拉宽到紧挨，不会造出重叠。
 
 输出是 JSONL，可以直接喂给 `check`。同一个 seed 两次输出**字节级相同**（有 SHA256 比对测试）。
 
@@ -246,7 +254,7 @@ moon run cmd/lincheck -- check --history examples/register_ok.jsonl --model bogu
 
 ## 十二、看到这里还没被说服？
 
-`docs/algorithm.md` 记录了 7 个不显然的技术判断：
+`docs/algorithm.md` 记录了 8 个不显然的技术判断：
 
 - 候选条件为什么用 `min(end)` 而不是 `min(start)`
 - 缓存键为什么不能用哈希值（碰撞会**静默漏报违规**）
@@ -255,5 +263,6 @@ moon run cmd/lincheck -- check --history examples/register_ok.jsonl --model bogu
 - 生成器为什么能当元测试
 - 超时为什么必须返回 `Unknown` 而不是猜
 - `Int` 是 32 位，64 位位图为什么不能塞进一个 `Int`
+- 模型为什么必须只排除物理上不可能的转换（过度收紧会对正确的系统报假违规）
 
 每一条都对应一次真实的实现错误或一次险些踩进的陷阱。
