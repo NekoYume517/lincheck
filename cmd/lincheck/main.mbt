@@ -60,6 +60,12 @@ struct Cli {
   concurrency : Double
   mode : String
   json : Bool
+  /// 命令行上**实际出现过**的参数名（按出现顺序，重复不去重）。
+  ///
+  /// 白名单校验（`validate_flags`）要用它：只凭字段值分不清「用户显式写了
+  /// `--budget-ms 5000`」和「用户没写、默认值恰好也是 5000」——而这两件事在
+  /// 「本子命令不接受该参数」的报错里必须区分。
+  used : Array[String]
 }
 
 ///|
@@ -76,6 +82,7 @@ fn default_cli(cmd : String) -> Cli {
     concurrency: 0.5,
     mode: "consistent",
     json: false,
+    used: [],
   }
 }
 
@@ -786,6 +793,90 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
 // ── 入口 ──────────────────────────────────────────────────────────────
 
 ///|
+/// 全部已知参数名（顺序即用法里的分组）。解析器只认这些。
+fn all_flags() -> Array[String] {
+  [
+    "--history", "--model", "--budget-ms", "--json", "--seeds", "--processes", "--ops",
+    "--seed", "--concurrency", "--consistent", "--random", "--inject",
+  ]
+}
+
+///|
+/// 某个子命令**接受**的参数白名单。
+///
+/// 为什么必须逐个子命令精确化（2026-11-17 审计 LC-4）：旧解析器五个子命令共用
+/// 一套 flag，别的子命令的参数被收下后静默丢弃 —— 例如
+/// `selfcheck --budget-ms 1` 收下参数、`cmd_selfcheck` 却用
+/// `CheckConfig::default()`，预算完全不生效，输出与不带该参数逐字节相同。
+/// 用户以为限了预算。只能打印不能生效的守卫比没有守卫更糟。
+fn flags_for(cmd : String) -> Array[String] {
+  if cmd == "check" || cmd == "minimize" {
+    ["--history", "--model", "--budget-ms", "--json"]
+  } else if cmd == "visualize" {
+    // visualize 没有 --json：它的输出是人读的时间轴，没有机器格式。
+    ["--history", "--model", "--budget-ms"]
+  } else if cmd == "gen" {
+    // gen 的输出本来就是 JSONL，也只按 seed/规模/模式生成历史。
+    [
+      "--model", "--processes", "--ops", "--seed", "--concurrency", "--consistent",
+      "--random", "--inject",
+    ]
+  } else {
+    // selfcheck：生成 + 逐 seed 检查，不接受时间预算（内部用默认档）。
+    ["--model", "--processes", "--ops", "--seeds"]
+  }
+}
+
+///|
+/// 某个参数属于哪些子命令（报错文案用）。
+fn flag_owners(flag : String) -> String {
+  if flag == "--history" {
+    "check / minimize / visualize"
+  } else if flag == "--budget-ms" {
+    "check / minimize / visualize"
+  } else if flag == "--json" {
+    "check / minimize"
+  } else if flag == "--seeds" {
+    "selfcheck"
+  } else if flag == "--processes" || flag == "--ops" {
+    "gen / selfcheck"
+  } else if flag == "--seed" || flag == "--concurrency" {
+    "gen"
+  } else if flag == "--consistent" || flag == "--random" || flag == "--inject" {
+    "gen"
+  } else {
+    "所有子命令"
+  }
+}
+
+///|
+/// 白名单校验：命令行上出现过的每个参数都必须属于当前子命令。
+///
+/// 返回 `false` 时原因已经打到 stderr，调用方只需 exit 2。
+/// 这一层只判「这个参数归不归这个子命令」；值域与规模（`--concurrency`
+/// 的 `[0, 1]`、`processes × ops` 的溢出与上限、`selfcheck` 至少一个操作）
+/// 由各子命令紧接着自己判 —— 那些判据依赖具体命令的语义，硬塞进白名单会让
+/// 一个函数同时管两件事。
+fn validate_flags(cmd : String, cli : Cli) -> Bool {
+  let allowed = flags_for(cmd)
+  for flag in cli.used {
+    let mut ok = false
+    for a in allowed {
+      if a == flag {
+        ok = true
+      }
+    }
+    if !ok {
+      eprintln(
+        "用法错误: \{flag} 不适用于子命令 \{cmd}（它属于 \{flag_owners(flag)}）",
+      )
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// 解析命令行：逐项消费 argv，遇到无法识别的形态返回 None。
 ///
 /// 用递归传递不可变 Cli 值（MoonBit 记录字段默认不可变，需要 mut 才能原地改）。
@@ -794,6 +885,18 @@ fn parse_from(cli : Cli, argv : Array[String], i : Int32) -> Cli? {
     return Some(cli)
   }
   let flag = argv[i]
+  // 先判「这个参数名认不认识」，认不出就走原有的参数错误路径；认识就记下来，
+  // 交给 validate_flags 按子命令核对（LC-4）。
+  let mut known = false
+  for k in all_flags() {
+    if k == flag {
+      known = true
+    }
+  }
+  if !known {
+    return None
+  }
+  cli.used.push(flag)
   if flag == "--json" {
     parse_from({ ..cli, json: true, }, argv, i + 1)
   } else if flag == "--consistent" {
@@ -890,6 +993,11 @@ pub fn run(argv : Array[String]) -> Int32 {
       EXIT_USAGE
     }
     Some(c) => {
+      // 参数白名单先于一切（LC-4）：别的子命令的参数不许静默丢弃。
+      // 用法错误（2）优先于数据错误（4）与「生成成功」——与既有口径一致。
+      if !validate_flags(c.command, c) {
+        return EXIT_USAGE
+      }
       let result : Int32 = try {
         match c.command {
           "check" => cmd_check(c)
