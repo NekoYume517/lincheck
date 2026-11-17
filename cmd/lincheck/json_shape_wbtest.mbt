@@ -111,3 +111,48 @@ test "LC-16: linearizable 的『历史操作数』键名必须与 violation 形�
     content="{\"verdict\":\"linearizable\",\"total\":0}",
   )
 }
+
+// ============================================================================
+// LC-18：`depth` 只属于「存在见证」的形状
+// ============================================================================
+//
+// 上一轮把「`minimize --json` 的 NoWitness 形状没有 `depth`」记成可断言性小瑕疵
+// 并略过。白盒可用之后重新判：`depth` 的定义是「**该见证**的最长一致前缀长度」
+// （`Violation.depth`），而 NoWitness 形状里根本没有见证（`witness:[]`）。
+// 补一个 `depth:0` 会把「没有见证」写成「有见证且前缀为空」—— 后者正是
+// `violation_reason` 里 data-inconsistency 的判据，两者不是一回事。
+// 所以结论是**保留缺席**，但必须①写进 API.md；②用断言锁住它不会被人「补上」。
+
+///|
+/// 「没有结论」形状：`reason` 是散文，且不带 `total` / `depth`。
+test "LC-18: unknown 形状只有 verdict+reason（reason 是散文，不是分类 token）" {
+  let out = unknown_json(
+    "超过时间预算 1ms（已探索 1 个搜索节点）",
+  )
+  inspect(
+    out,
+    content="{\"verdict\":\"unknown\",\"reason\":\"超过时间预算 1ms（已探索 1 个搜索节点）\"}",
+  )
+  assert_false(out.contains("\"total\""))
+  assert_false(out.contains("\"depth\""))
+  assert_false(out.contains("\"witness\""))
+}
+
+///|
+/// NoWitness 形状：`witness` 必须是空数组，**且整个对象不出现 `depth`**。
+test "LC-18: NoWitness 形状不含 depth（无见证就没有前缀长度）" {
+  let out = no_witness_json(1)
+  inspect(
+    out,
+    content="{\"verdict\":\"non-linearizable\",\"total\":1,\"witness\":[],\"reason\":\"no-explainable-witness\"}",
+  )
+  // 有人「顺手补上」depth 时这里必须红：那会把「无见证」写成「有见证且前缀为空」
+  assert_false(out.contains("\"depth\""))
+  // 与违规形状对照：那个形状有见证，所以必须有 depth
+  let bad = js_op(0, 0, @lib.Cas(1, 2), @lib.Bool(true), 2L, 5L)
+  let history = @lib.History::{ operations: [bad], }
+  let v = @lib.Violation::{ ops: [bad], depth: 0, explanation: "", }
+  assert_true(
+    json_violation(v, history, "non-linearizable").contains("\"depth\""),
+  )
+}

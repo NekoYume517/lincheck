@@ -395,6 +395,33 @@ fn linearizable_json(total : Int32) -> String {
 }
 
 ///|
+/// 「没有结论」的 JSON 形状（`check` / `minimize` 三处共用一份）。
+///
+/// `reason` 在两种 verdict 下承载**同一个语义槽**（「为什么是这个结论」），
+/// 但取值域不同：违规形状是分类 token（`data-inconsistency` /
+/// `concurrency-race` / `unconfirmed-witness`），这里是一句散文（预算耗尽多少
+/// 毫秒 / 几个 Nil / 哪个操作区间非法）。这是刻意的：分类要能被程序分支，
+/// 散文要能被人读懂。语义写在 `API.md` §7.1，并由
+/// `cmd/lincheck/json_shape_wbtest.mbt` 逐字节锁住（2026-11-17-b 第二轮 LC-18）。
+fn unknown_json(reason : String) -> String {
+  "{\"verdict\":\"unknown\",\"reason\":\"" + reason + "\"}"
+}
+
+///|
+/// 「违规但找不到可解释见证」的 JSON 形状（`minimize` 专用）。
+///
+/// 这个形状**没有 `depth`**，而且不该有：`depth` 的定义是「该见证的最长一致
+/// 前缀长度」（`Violation.depth`），这里根本没有见证（`witness` 是空数组）。
+/// 补一个 `depth: 0` 会把「没有见证」写成「有见证且前缀为空」—— 后者正是
+/// `violation_reason` 里 data-inconsistency 的判据，两种结论不是一回事。
+/// 语义写在 `API.md` §7.1，缺席本身由 `json_shape_wbtest.mbt` 锁住。
+fn no_witness_json(total : Int32) -> String {
+  "{\"verdict\":\"non-linearizable\",\"total\":" +
+  total.to_string() +
+  ",\"witness\":[],\"reason\":\"no-explainable-witness\"}"
+}
+
+///|
 /// 解析 `--model`，未知名字返回可读的错误消息。
 ///
 /// 不静默回退到默认模型：拼错一个字母就静默换模型，会给出一个看起来
@@ -465,7 +492,7 @@ fn cmd_check(cli : Cli) -> Int32 raise {
     }
     @lib.Unknown(reason) => {
       if cli.json {
-        println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
+        println(unknown_json(reason))
       } else {
         println("? UNKNOWN  \{reason}")
       }
@@ -540,7 +567,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     @lib.Inconclusive(reason) => {
       // 与 `check` 同口径：没有结论就是 3，且不得出现 NON-LINEARIZABLE 字样。
       if cli.json {
-        println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
+        println(unknown_json(reason))
       } else {
         println("? UNKNOWN  \{reason}")
         println(
@@ -554,9 +581,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     }
     @lib.NoWitness => {
       if cli.json {
-        println(
-          "{\"verdict\":\"non-linearizable\",\"total\":\{original_n},\"witness\":[],\"reason\":\"no-explainable-witness\"}",
-        )
+        println(no_witness_json(original_n))
       } else {
         println("✗ NON-LINEARIZABLE")
         println("")
@@ -599,7 +624,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
         @lib.Violation(_) => true
         @lib.Unknown(reason) => {
           if cli.json {
-            println("{\"verdict\":\"unknown\",\"reason\":\"\{reason}\"}")
+            println(unknown_json(reason))
           } else {
             println("? UNKNOWN  \{reason}")
             println("  \{v.explanation}")

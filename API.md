@@ -313,6 +313,56 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
 
 退出码：0 线性一致，1 发现违规，2 用法错误，3 未知，4 输入数据错误。
 
+### 7.1 `--json` 的形状（**键名即契约**）
+
+只有 `check` 与 `minimize` 接受 `--json`（`visualize` 是人读的时间轴，没有机器
+格式；`selfcheck` 是元测试摘要）。四种形状，逐字节由
+`cmd/lincheck/json_shape_wbtest.mbt` 锁住（main 包的 `*_wbtest.mbt` 能直接调
+私有构造器，所以 stdout 取不到不再是理由）：
+
+| verdict | 命令 | 形状 |
+|---|---|---|
+| `linearizable` | `check` / `minimize` | `{"verdict":"linearizable","total":N}` |
+| `unknown` | `check` / `minimize` | `{"verdict":"unknown","reason":S}` |
+| `non-linearizable` | `check` / `minimize` | `{"verdict":"non-linearizable","reason":R,"total":N,"witness":[W…],"depth":D}` |
+| `non-linearizable`（无合格见证） | `minimize` | `{"verdict":"non-linearizable","total":N,"witness":[],"reason":"no-explainable-witness"}` |
+
+`W` = `{"id":…,"process":…,"op":"…","result":"…","start":…,"end":…}`（`op` / `result`
+是 `kind_label` / `result_label` 的文本，如 `"W=1"` / `"Cas(1->2)"` / `"Value(1)"`）。
+
+**键 → 承载的量**（同一张表也是「一个量只有一个键名」的判据）：
+
+| 键 | 承载的量 | 出现处 |
+|---|---|---|
+| `verdict` | 结论本身（`linearizable` / `non-linearizable` / `unknown`） | 全部 |
+| `total` | **输入历史**的操作数 | 除 `unknown` 外的全部 |
+| `witness` | 见证子集；**条数由数组长度承载**（没有单独的计数字段） | `non-linearizable` 两种 |
+| `witness[i].id` / `.process` / `.start` / `.end` | 该操作的原样字段 | 有见证时 |
+| `witness[i].op` / `.result` | `kind_label` / `result_label` 的文本 | 有见证时 |
+| `depth` | **该见证**的最长一致前缀长度 | 只有**存在见证**的形状 |
+| `reason` | 结论的成因 | `unknown`（散文）与违规（分类 token） |
+
+三条不变量：
+
+1. **同一个量只有一个键名。** 输入历史的操作数一律叫 `total`；
+   `check` 的 linearizable 分支曾叫 `ops`（2026-11-17-b 第二轮 LC-16），
+   于是同一条命令的两个分支对同一个数字用两个名字，脚本按 `jq .total` 取值会在
+   「历史合法」这一支上拿到 `null`。
+2. **`depth` 只属于存在见证的形状。** `no-explainable-witness` 那条没有见证
+   （`witness: []`），因此**没有 `depth`**：补一个 `depth: 0` 会把「没有见证」
+   写成「有见证且前缀为空」，后者正是违规分类 `data-inconsistency` 的判据
+   （`violation_reason`），两种结论不能混（2026-11-17-b 第二轮 LC-18）。
+3. **`reason` 的两种取值域是刻意的。** 违规形状里它是**分类 token**
+   （`data-inconsistency` / `concurrency-race` / `unconfirmed-witness`），
+   供程序分支；`unknown` 形状里它是一句**散文**（「超过时间预算 1ms（已探索
+   N 个搜索节点）」/「历史包含 N 个未知结果（Nil）…」/「操作 X 的时间区间非法…」），
+   供人读懂「为什么没有结论」。同一个语义槽（为什么是这个 verdict），
+   两种取值域，语义不同但槽位相同。
+
+`witness` 数组**顺序由库层决定**（`build_violation` 按 id 升序，
+`checker_test.mbt` 的 `violation_ops_are_sorted_by_id` 锁着）；CLI 只渲染，
+不重排也不去重（`json_shape_wbtest.mbt` 用一份乱序见证钉住这一点）。
+
 ## 8. 测试要求
 
 - **手工小例子**：3-5 个手写历史，人工已知答案
