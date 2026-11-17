@@ -836,6 +836,61 @@ fn selfcheck_scale(cli : Cli) -> Int32? {
 }
 
 ///|
+/// `selfcheck` 摘要的**头部**：三个规模量各就各位。
+///
+/// 抽成纯函数是为了让它可断言（main 包的 `*_test.mbt` 拿不到 stdout，但
+/// `*_wbtest.mbt` 能直接调私有函数）。`processes` 传**命令行上写的**值，
+/// 钳制在这里做一次（`--processes 0` → 1，与生成器同口径），`ops_per_seed`
+/// 传已经过 `selfcheck_scale` 校验的乘积，避免第二处重算。
+fn selfcheck_header(
+  model : String,
+  seeds : Int32,
+  processes : Int32,
+  ops_per_process : Int32,
+  ops_per_seed : Int32,
+) -> String {
+  let clients = if processes < 1 { 1 } else { processes }
+  "selfcheck  model=\{model}  seeds=\{seeds}  clients=\{clients}  ops/client=\{ops_per_process}  ops/seed=\{ops_per_seed}"
+}
+
+///|
+/// `selfcheck` 摘要的**计数段**：五个计数全部是「seed 的个数」，口径必须写清。
+///
+/// - `failed` **从这里派生**（`violations + unknowns`），不再单独累加：
+///   两份计数各加一次迟早会分叉，而 PASS 判据读的正是 `failed`；
+/// - 「注入违规被发现：a / b」的 b 是**真的做过注入的 seed 数**（不是 `seeds`），
+///   两者在 n ≥ 1 时相等（`src/audit_inject_invariant_test.mbt`），但语义不同，
+///   所以分母用 `injected`；
+/// - `injected < seeds` 时补一行诊断：那时 PASS 会变成无证据通过，必须说出原因。
+fn selfcheck_body(
+  violations : Int32,
+  unknowns : Int32,
+  injected : Int32,
+  injected_missed : Int32,
+  seeds : Int32,
+) -> String {
+  let failed = violations + unknowns
+  let lines : Array[String] = []
+  lines.push(
+    "  · 合法历史全部通过：\{if failed == 0 { "是 ✓" } else { "否 ✗" }}",
+  )
+  lines.push("    - 误判违规：\{violations}")
+  lines.push("    - 结论未知：\{unknowns}")
+  lines.push(
+    "  · 注入违规被发现：\{injected - injected_missed} / \{injected}",
+  )
+  if injected < seeds {
+    // 防御性诊断（当前不可达，见 src/audit_inject_invariant_test.mbt 的可证明性）：
+    // 一旦注入模板改坏到「合法历史改不动」，PASS 会变成无证据通过，
+    // 这行必须把原因说出来，而不是只留一个 0 / 0。
+    lines.push(
+      "    - 未产生注入的 seed：\{seeds - injected}（注入模板为空，或本配置下所有单点改写都能被模型吸收）",
+    )
+  }
+  lines.join("\n")
+}
+
+///|
 fn cmd_selfcheck(cli : Cli) -> Int32 {
   let model = match require_model(cli) {
     Some(m) => m
@@ -849,13 +904,12 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
   // 与 gen 共用同一份规模校验，并额外要求「至少一个操作」。
   // 库层生成器对不可用规模（含 0 条）的兜底是空历史；CLI 若不在此拒绝，
   // 会把「一个操作都没生成」渲染成 PASS + exit 0。
-  match selfcheck_scale(cli) {
-    Some(_) => ()
+  let ops_per_seed = match selfcheck_scale(cli) {
+    Some(n) => n
     None => return EXIT_USAGE
   }
   let total = if cli.seeds < 1 { 1 } else { cli.seeds }
   let mut seed = 1
-  let mut failed = 0
   let mut violations = 0
   let mut unknowns = 0
   let mut injected = 0
@@ -870,16 +924,11 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
       concurrency: conc,
     }
     let h = @lib.generate_consistent(model, cfg)
+    // `failed` 不再单独累加：它就是 `violations + unknowns`（见 selfcheck_body）。
     match @lib.check(h, model, @lib.CheckConfig::default()) {
       @lib.Linearizable => ()
-      @lib.Violation(_) => {
-        violations = violations + 1
-        failed = failed + 1
-      }
-      @lib.Unknown(_) => {
-        unknowns = unknowns + 1
-        failed = failed + 1
-      }
+      @lib.Violation(_) => violations = violations + 1
+      @lib.Unknown(_) => unknowns = unknowns + 1
     }
     // 顺手做注入测试：制造违规，检查器必须发现
     let bad = @lib.inject_violation(h, model, seed)
@@ -893,28 +942,27 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
     seed = seed + 1
   }
   println(
-    "selfcheck  model=\{cli.model}  seeds=\{total}  ops/seed=\{cli.ops_per_process}",
+    selfcheck_header(
+      cli.model,
+      total,
+      cli.processes,
+      cli.ops_per_process,
+      ops_per_seed,
+    ),
   )
   println(
-    "  · 合法历史全部通过：\{if failed == 0 { "是 ✓" } else { "否 ✗" }}",
+    selfcheck_body(violations, unknowns, injected, injected_missed, total),
   )
-  println("    - 误判违规：\{violations}")
-  println("    - 结论未知：\{unknowns}")
-  println(
-    "  · 注入违规被发现：\{injected - injected_missed} / \{injected}",
-  )
-  if injected < total {
-    // 防御性诊断（当前不可达，见 src/audit_inject_invariant_test.mbt 的可证明性）：
-    // 一旦注入模板改坏到「合法历史改不动」，PASS 会变成无证据通过，
-    // 这行必须把原因说出来，而不是只留一个 0 / 0。
-    println(
-      "    - 未产生注入的 seed：\{total - injected}（注入模板为空，或本配置下所有单点改写都能被模型吸收）",
-    )
-  }
   // PASS 的判据必须**同时**覆盖两件事：合法历史不被误判，且每一档都真的做过
   // 一次注入检出。旧判据只看 failed 与 injected_missed，于是「一条都没注入」
   // 也算通过 —— 那正是「注入违规被发现：0 / 0 → PASS」的来源。
-  if failed == 0 && injected_missed == 0 && injected == total {
+  //
+  // `failed` 不再是一个独立累加器，判据直接读两个来源计数：
+  // `violations + unknowns == 0`（显示那一行由 selfcheck_body 派生）。
+  if violations == 0 &&
+    unknowns == 0 &&
+    injected_missed == 0 &&
+    injected == total {
     println("结果：PASS")
     EXIT_OK
   } else {

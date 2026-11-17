@@ -128,13 +128,21 @@ moon run cmd/lincheck -- selfcheck --model register --seeds 300
 预期：
 
 ```
-selfcheck  model=register  seeds=300  ops/seed=4
+selfcheck  model=register  seeds=300  clients=3  ops/client=4  ops/seed=12
   · 合法历史全部通过：是 ✓
     - 误判违规：0
     - 结论未知：0
   · 注入违规被发现：300 / 300
 结果：PASS
 ```
+
+头部三个规模量各就各位（2026-11-17-b 第二轮审计 LC-17：旧摘要把「每个客户端
+的操作数」标成 `ops/seed`，而一个 seed 实际生成 `processes × ops` 条 ——
+默认参数下读者会低估 3 倍工作量）：`clients` 是**生效后**的客户端数
+（`--processes 0` 钳制为 1 时这里报 1，不是 0）、`ops/client` 就是命令行上的
+`--ops`、`ops/seed` 是两者之积。计数段里的每个数字都是「seed 的个数」：
+「注入违规被发现：a / b」的分母 `b` 是**真的做过注入的 seed 数**（在 n ≥ 1
+时等于 `seeds`，见 `src/audit_inject_invariant_test.mbt`）。
 
 `selfcheck` 与 `gen` 共用 `total_ops_checked`：`processes × ops` 溢出 Int32 或超过
 `MAX_GENERATED_OPS` 时返回用法错误（退出码 `2`），不会把生成器兜底的空历史
