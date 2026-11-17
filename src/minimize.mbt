@@ -797,6 +797,34 @@ pub(all) enum MinimizeOutcome {
 }
 
 ///|
+/// 见证的 `depth`：只能用**这份见证**的复核结果（2026-11-17 审计 LC-9）。
+///
+/// `Violation.depth` 的文档含义是「搜索过程中最后一致的前缀长度」，量纲绑定在
+/// **被搜索的那份历史**上。旧实现在复核没有结论时回落成 `v.depth`——那是
+/// **原历史**（通常更大）的数字，贴到见证上就会多报前缀：`noisy_bad` 的
+/// check 给出 depth=3 / 见证 4 条，最小化压到 2 条；一旦复核超时，旧实现会把
+/// 「3」写到一条 2 条操作的见证上（`--json` 的 `depth` 字段与
+/// `render_violation` 的「最长一致前缀长度」都直接展示它）。
+///
+/// depth 还参与 `violation_reason` 的 data-inconsistency 判据
+/// （`depth == 0 && ops.length() == 1`），所以口径错会连带改分类。
+///
+/// 复核没有结论（`Unknown`）或见证已不能复现违规（`Linearizable`）时如实返回
+/// `0`：不声明任何前缀。宁可少说一句，也不借用另一份历史的数字——
+/// 见证**仍然违规**这件事由 `witness_ok` 独立验证过，这里降级的只是
+/// 「前缀有多长」这一条修饰信息。
+fn[M : Model] witness_depth(
+  minimal : Array[Operation],
+  model : M,
+  config : CheckConfig,
+) -> Int32 {
+  match probe_ops(minimal, model, config) {
+    Violation(v2) => v2.depth
+    _ => 0
+  }
+}
+
+///|
 /// 违规见证的可空版本：`None` = 历史违规，但不存在满足下界与可解释性的见证。
 ///
 /// `min_witness <= 0` 时走**无守卫**路径（纯 ddmin，允许压到 1 条操作），
@@ -818,10 +846,7 @@ fn[M : Model] minimize_outcome_opt(
       if min_witness <= 0 {
         // 纯 ddmin：显式请求「不要守卫」，允许单个操作作见证。
         let minimal = ddmin_bounded(seed, model, config, 200, 0, None)
-        let depth = match probe_ops(minimal, model, config) {
-          Violation(v2) => v2.depth
-          _ => v.depth
-        }
+        let depth = witness_depth(minimal, model, config)
         MinViolation(Violation::{
           ops: sort_ops_by_id(minimal),
           depth,
@@ -843,10 +868,7 @@ fn[M : Model] minimize_outcome_opt(
             unknown,
           ) {
           Some(minimal) => {
-            let depth = match probe_ops(minimal, model, config) {
-              Violation(v2) => v2.depth
-              _ => v.depth
-            }
+            let depth = witness_depth(minimal, model, config)
             MinViolation(Violation::{
               ops: sort_ops_by_id(minimal),
               depth,
@@ -1017,10 +1039,7 @@ fn[M : Model] minimize_by_process_opt_with_config(
             None
           }
         Some(minimal) => {
-          let depth = match probe_ops(minimal, model, config) {
-            Violation(v2) => v2.depth
-            _ => v.depth
-          }
+          let depth = witness_depth(minimal, model, config)
           Some(Violation::{
             ops: sort_ops_by_id(minimal),
             depth,

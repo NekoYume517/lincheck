@@ -82,6 +82,50 @@ pub impl Model for TimeoutRegister with fn state_hash(_self, state) {
 }
 
 ///|
+/// 与 `TimeoutRegister` 同构，但慢档只忙等 **10 ms**（LC-9 用例专用）。
+///
+/// 为什么另起一个类型而不是改 `TimeoutRegister` 的常量：那两条既有用例
+/// （首轮成功 / 删除复验超时）依赖 50 ms 与 10 ms 预算的比例，改常量等于悄悄
+/// 改动它们的判据。新用例只想「确定性地让复核超时」，10 ms 足够，
+/// 而扫描多个窗口时它把永久测试成本压到 1/5（HANDOVER §21.2-4）。
+struct FastTimeoutRegister {
+  applications : Array[Int32]
+  fast_applications : Int32
+}
+
+///|
+pub impl Model for FastTimeoutRegister with fn name(_self) {
+  "fast-timeout-register"
+}
+
+///|
+pub impl Model for FastTimeoutRegister with fn init(_self) {
+  [0]
+}
+
+///|
+pub impl Model for FastTimeoutRegister with fn apply(self, state, kind) {
+  self.applications[0] = self.applications[0] + 1
+  if self.applications[0] > self.fast_applications {
+    let until = @env.now() + 10UL
+    while @env.now() < until {
+
+    }
+  }
+  register_model().apply(state, kind)
+}
+
+///|
+pub impl Model for FastTimeoutRegister with fn state_eq(_self, a, b) {
+  states_equal(a, b)
+}
+
+///|
+pub impl Model for FastTimeoutRegister with fn state_hash(_self, state) {
+  poly_hash(state)
+}
+
+///|
 fn timeout_pair() -> History {
   History::{
     operations: [
@@ -201,4 +245,187 @@ test "minimize unknown: NoWitness 结语的成因分类不得把未知折成竞�
   // 已知分支的措辞保持不变（既有 CLI 输出依赖它）。
   assert_true(data.contains("这通常意味着历史数据自相矛盾"))
   assert_true(race.contains("该反例属于并发竞态"))
+}
+
+///|
+/// `examples/noisy_bad.jsonl` 的 8 个操作（同款硬编码，避免测试依赖文件 IO）。
+fn noisy_bad_ops() -> Array[Operation] {
+  [
+    Operation::{
+      id: 0,
+      process: 0,
+      kind: Read,
+      result: Value(0),
+      start: 0L,
+      end: 2L,
+    },
+    Operation::{
+      id: 1,
+      process: 1,
+      kind: Write(1),
+      result: Ok,
+      start: 0L,
+      end: 10L,
+    },
+    Operation::{
+      id: 2,
+      process: 2,
+      kind: Write(2),
+      result: Ok,
+      start: 12L,
+      end: 20L,
+    },
+    Operation::{
+      id: 3,
+      process: 3,
+      kind: Read,
+      result: Value(0),
+      start: 22L,
+      end: 24L,
+    },
+    Operation::{
+      id: 4,
+      process: 1,
+      kind: Read,
+      result: Value(1),
+      start: 30L,
+      end: 40L,
+    },
+    Operation::{
+      id: 5,
+      process: 2,
+      kind: Write(1),
+      result: Ok,
+      start: 50L,
+      end: 60L,
+    },
+    Operation::{
+      id: 6,
+      process: 4,
+      kind: Read,
+      result: Value(1),
+      start: 62L,
+      end: 70L,
+    },
+    Operation::{
+      id: 7,
+      process: 0,
+      kind: Read,
+      result: Value(0),
+      start: 72L,
+      end: 80L,
+    },
+  ]
+}
+
+///|
+/// 2026-11-17 审计 LC-9：最小化产物的 `Violation.depth` 必须来自**那份见证**的
+/// 复核，不得借用另一份历史的 depth。
+///
+/// 旧实现（`minimize.mbt` 三处）写成：
+///
+///     let depth = match probe_ops(minimal, model, config) {
+///       Violation(v2) => v2.depth
+///       _ => v.depth          // ← v 是**原历史**的 Violation
+///     }
+///
+/// `v.depth` 描述的是整份历史的搜索前缀，量纲完全不同：`noisy_bad` 的 check
+/// 给出 depth=3 / 见证 4 条，最小化压到 2 条 —— 一旦那次复核没有结论，旧实现
+/// 会把「3」贴到一条 2 条操作的见证上（`--json` 的 `depth` 字段、以及
+/// `render_violation` 的「最长一致前缀长度」）。与上一轮 LC-D2「A 的证据贴到 B
+/// 上」同族。depth 还参与 `violation_reason` 的 data-inconsistency 判据
+/// （`depth == 0 && ops.length() == 1`），所以口径错会连带改分类。
+///
+/// 本用例用可控慢模型扫「第几次 apply 之后变慢」这一小段窗口（`k = 6..10`，
+/// 恰好覆盖「见证搜索成功、但 depth 复核超时」那一档），对每一档都要求 depth
+/// 不超过见证自身能支撑的范围；窗口上限刻意收窄，避免把慢模型的 50 ms 忙等
+/// 变成整个测试套的固定成本（HANDOVER §21.2-4）。
+test "minimize unknown: 见证的 depth 不得借用另一份历史" {
+  let h = ops_to_history(noisy_bad_ops())
+  // 独立 oracle：这份历史确实违规（否则整条用例测的对象就是错的）。
+  assert_true(
+    check_with(h, register_model(), CheckConfig::default()) is Violation(_),
+  )
+  let config = CheckConfig::{
+    time_budget_ms: 2,
+    max_states: 200000,
+    allow_unknown_results: false,
+  }
+  let unlimited = CheckConfig::{ ..config, time_budget_ms: 0, }
+  // 原历史那份 check 见证的规模：最小化若压得更小，就是「借用 depth 会露馅」
+  // 的那一档（noisy_bad：check 见证 4 条 / depth 3，最小化后 2 条）。
+  let check_witness_len = match check_with(h, register_model(), unlimited) {
+    Violation(v0) => v0.ops.length()
+    _ => 0
+  }
+  assert_true(check_witness_len > 2)
+  let mut saw_shrunk = 0
+  let mut k = 0
+  while k <= 12 {
+    let model = FastTimeoutRegister::{
+      applications: [0],
+      fast_applications: k,
+    }
+    match minimize_outcome_opt(h, model, config, MIN_WITNESS) {
+      MinViolation(v) =>
+        if v.ops.length() > 0 {
+          // 见证本身必须真的违规（用不限时的 register 独立复核）。
+          assert_true(
+            check_with(ops_to_history(v.ops), register_model(), unlimited)
+            is Violation(_),
+          )
+          // 核心断言：depth 描述的是**这条见证**，上限是 len-1。
+          // 旧实现回落原历史的 depth（3）贴到 2 条见证上 → 3 > 1，这条会红。
+          assert_true(v.depth <= v.ops.length() - 1)
+          if v.ops.length() < check_witness_len {
+            saw_shrunk = saw_shrunk + 1
+          }
+        }
+      _ => ()
+    }
+    k = k + 1
+  }
+  // 防空断言：必须真的走到「最小化把见证压小了」的那些档，
+  // 否则上面那条 `depth <= len-1` 会因为见证与原历史一样大而恒真。
+  assert_true(saw_shrunk > 0)
+}
+
+///|
+/// `witness_depth` 的直接契约（确定、便宜）：复核有结论时给那份见证自己的
+/// 前缀长度；复核没有结论时如实为 0，绝不借用外部数字。
+test "minimize unknown: witness_depth 复核无结论时不声明前缀" {
+  let witness : Array[Operation] = [
+    Operation::{
+      id: 0,
+      process: 0,
+      kind: Write(2),
+      result: Ok,
+      start: 12L,
+      end: 20L,
+    },
+    Operation::{
+      id: 1,
+      process: 3,
+      kind: Read,
+      result: Value(0),
+      start: 22L,
+      end: 24L,
+    },
+  ]
+  let config = CheckConfig::{
+    time_budget_ms: 1,
+    max_states: 200000,
+    allow_unknown_results: false,
+  }
+  // 不限时复核：这份见证确实违规（W=2 之后读到 0），最长一致前缀 1。
+  inspect(
+    witness_depth(witness, register_model(), CheckConfig::{
+      ..config,
+      time_budget_ms: 0,
+    }),
+    content="1",
+  )
+  // 每次 apply 都慢 50 ms、预算只有 1 ms：复核必然没有结论 → 0。
+  let slow = TimeoutRegister::{ applications: [0], fast_applications: 0, }
+  inspect(witness_depth(witness, slow, config), content="0")
 }
