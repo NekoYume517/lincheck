@@ -79,3 +79,35 @@ test "JSON 形状: 多操作见证按库层给定顺序渲染（CLI 不重排）
     content="{\"verdict\":\"non-linearizable\",\"reason\":\"concurrency-race\",\"total\":2,\"witness\":[{\"id\":1,\"process\":1,\"op\":\"W=2\",\"result\":\"Ok\",\"start\":12,\"end\":20},{\"id\":0,\"process\":0,\"op\":\"W=1\",\"result\":\"Ok\",\"start\":0,\"end\":10}],\"depth\":1}",
   )
 }
+
+// ============================================================================
+// LC-16：同一个量在整条 CLI 里只能有一个键名
+// ============================================================================
+//
+// **修复前**的清点（`evidence/json-shape-inventory-before.txt`，全部是实测输出；
+// 修复后的实测见 `evidence/json-shape-inventory-after.txt`）：
+//
+//   check    --json  线性一致   {"verdict":"linearizable","ops":3}          ← ops（修复前）
+//   check    --json  违规       {"verdict":"non-linearizable",…,"total":3,…} ← total
+//   minimize --json  线性一致   {"verdict":"linearizable","total":3}         ← total
+//   minimize --json  无见证     {…,"total":1,…}                              ← total
+//
+// 「历史操作数」这一个量有 `ops` 与 `total` 两个名字，而且分叉发生在**同一条
+// 命令内部**（`check` 的两个分支）。脚本按 `jq .total` 取值时，历史合法这一支
+// 拿到 null；按 `jq .ops` 取值时，违规这一支拿到 null。整条 CLI 里 `total`
+// 是多数派（4/5 个形状）且是 `docs/exit-codes.md` 展示给用户的那个名字，
+// 所以修法是把 `ops` 收敛成 `total`，并让两条命令共用一个构造器。
+
+///|
+/// `linearizable` 形状：历史操作数的键名必须与违规形状一致（`total`）。
+test "LC-16: linearizable 的『历史操作数』键名必须与 violation 形状一致" {
+  inspect(
+    linearizable_json(3),
+    content="{\"verdict\":\"linearizable\",\"total\":3}",
+  )
+  // 0 条操作也要走同一条形状（空历史是平凡线性一致，不是特例）
+  inspect(
+    linearizable_json(0),
+    content="{\"verdict\":\"linearizable\",\"total\":0}",
+  )
+}

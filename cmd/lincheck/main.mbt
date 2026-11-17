@@ -384,6 +384,17 @@ fn json_violation(
 }
 
 ///|
+/// 「线性一致」的 JSON 形状（`check` 与 `minimize` 共用一份）。
+///
+/// 收敛到一个构造器是为了让**同一个量在整条 CLI 里只有一个键名**：历史操作数
+/// 在违规形状里叫 `total`（`json_violation`），在 linearizable 形状里曾叫 `ops`
+/// —— 同一条命令的两个分支对同一个数字用两个名字，脚本按 `jq .total` 取值时
+/// 会在「历史合法」这一支上拿到 null（2026-11-17-b 第二轮 LC-16）。
+fn linearizable_json(total : Int32) -> String {
+  "{\"verdict\":\"linearizable\",\"total\":" + total.to_string() + "}"
+}
+
+///|
 /// 解析 `--model`，未知名字返回可读的错误消息。
 ///
 /// 不静默回退到默认模型：拼错一个字母就静默换模型，会给出一个看起来
@@ -428,7 +439,7 @@ fn cmd_check(cli : Cli) -> Int32 raise {
   match @lib.check(history, model, cfg) {
     @lib.Linearizable => {
       if cli.json {
-        println("{\"verdict\":\"linearizable\",\"ops\":\{history.length()}}")
+        println(linearizable_json(history.length()))
       } else {
         println(
           "✓ LINEARIZABLE  (\{history.length()} 个操作，模型 \{cli.model})",
@@ -569,7 +580,9 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
     }
     @lib.Consistent => {
       if cli.json {
-        println("{\"verdict\":\"linearizable\",\"total\":\{original_n}}")
+        // 与 `check` 共用同一个构造器：同一个量（历史操作数）在整条 CLI 里
+        // 只能有一个键名（LC-16）。
+        println(linearizable_json(original_n))
       } else {
         println("✓ 历史线性一致，没有反例需要最小化。")
       }
@@ -686,7 +699,7 @@ fn cmd_visualize(cli : Cli) -> Int32 raise {
 /// ```
 ///
 /// 第一条尤其危险：这份空历史随后被 `check` 消费时会得到
-/// `{"verdict":"linearizable","ops":0}` —— 一条流水线就此拿到「通过」的空结果，
+/// `{"verdict":"linearizable","total":0}` —— 一条流水线就此拿到「通过」的空结果，
 /// 与 LC-1（`selfcheck --ops 0` 空跑 PASS）同一族。那一轮只修了 `selfcheck`
 /// 这一侧，`gen` 这一侧的镜像缺口留在这里。**显式的空历史只能由 `--ops 0`
 /// 表达**；`--processes 0` 仍然钳制为 1（2026-11-10 LC-A3 的显式契约，

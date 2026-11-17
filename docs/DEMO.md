@@ -178,7 +178,7 @@ moon run cmd/lincheck -- gen --model register --processes 3 --ops 10 --seed 42 -
 旧文写「`--processes 0` 产出空历史」，与实现的钳制行为不符）；
 `--ops` / `--processes` 取**负数**是用法错误（退出码 2，2026-11-17-b 审计 LC-14：
 负值曾被钳成 0/1，`--ops -1` 于是产出一份空历史并 exit 0，交给 `check` 会得到
-`{"verdict":"linearizable","ops":0}` 的「通过」空结果）；
+`{"verdict":"linearizable","total":0}` 的「通过」空结果）；
 `processes × ops` 超出 Int32 或超出单次生成可行上限（`MAX_GENERATED_OPS`
 = 1000 万条）都直接报用法错误（退出码 2），不会静默回绕成一个错误的规模，
 也不会走进无界分配把进程挂死。

@@ -8,7 +8,7 @@
 //   $ lincheck gen --model register --processes 65536 --ops 65536 --seed 1 > h.jsonl
 //   $ wc -c h.jsonl        # 只有 1 个换行
 //   $ lincheck check --history h.jsonl --model register --json
-//   {"verdict":"linearizable","ops":0}          # 请求了 42 亿个操作，报「一切正常」
+//   {"verdict":"linearizable","total":0}          # 请求了 42 亿个操作，报「一切正常」
 //
 // 「请求 N 个操作、静默产出 0 个、退出码 0」会让调用方无法区分「生成成功」与
 // 「什么都没生成」。`docs/exit-codes.md` 把参数问题定义为 `2`（用法错误），
