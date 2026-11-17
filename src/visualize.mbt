@@ -387,20 +387,27 @@ pub fn order_facts(ops : Array[Operation]) -> String {
     let mut j = 0
     while j < n && !stop {
       let b = ops[j]
-      if a != b && happens_before(a, b) {
-        found = found + 1
-        if shown < fact_limit {
-          shown = shown + 1
-          sb.write_string("    · ")
-          sb.write_string(op_summary(a))
-          sb.write_string("(proc \{a.process}) 先于 ")
-          sb.write_string(op_summary(b))
-          sb.write_string("(proc \{b.process})：\{a.end} < \{b.start}\n")
+      // `scanned` 的单位必须和同一句里的「n(n-1) 对有向组合」一致：
+      // 只数**去重有序对**，`i == j` 的自比较不算「一对」（2026-11-17 审计 LC-10）。
+      // 旧实现把 `scanned += 1` 写在 `a != b` 判定之外，于是「已扫描 20000 对」
+      // 实际只覆盖 19859 个真正的有序对，读者无法用它重算 `found`；
+      // 实测同一句里 `found` 报 120、按「前 20000 个去重对」独立重算是 259。
+      if a != b {
+        if happens_before(a, b) {
+          found = found + 1
+          if shown < fact_limit {
+            shown = shown + 1
+            sb.write_string("    · ")
+            sb.write_string(op_summary(a))
+            sb.write_string("(proc \{a.process}) 先于 ")
+            sb.write_string(op_summary(b))
+            sb.write_string("(proc \{b.process})：\{a.end} < \{b.start}\n")
+          }
         }
-      }
-      scanned = scanned + 1
-      if scanned >= scan_limit {
-        stop = true
+        scanned = scanned + 1
+        if scanned >= scan_limit {
+          stop = true
+        }
       }
       j = j + 1
     }
