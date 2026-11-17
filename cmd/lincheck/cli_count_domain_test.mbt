@@ -113,3 +113,48 @@ test "LC-14 守护: 零与正规模仍然按既有契约接受" {
     content="2",
   )
 }
+
+// ============================================================================
+// LC-19：`--seeds` 是同一个守卫轴的第三个参数
+// ============================================================================
+//
+// LC-14 只堵了 `--ops` / `--processes`，同一族的 `--seeds` 留着：
+//
+// ```text
+// $ lincheck selfcheck --model register --seeds -3 --processes 2 --ops 2
+// selfcheck  model=register  seeds=1  clients=2  ops/client=2  ops/seed=4   exit 0
+// ```
+//
+// 与 `--ops -1` 的区别是**危害更小**（真的跑了 1 轮，头部也如实报 `seeds=1`），
+// 但归类相同：负数不是计数，钳成 1 等于替用户改写工作量。`--seeds 0` 保持
+// 现有钳制（1 轮是实打实的工作，与 `--ops 0` 的空跑不是一回事）。
+
+///|
+test "LC-19: selfcheck 的 --seeds 不得为负（不再静默跑 1 轮）" {
+  inspect(
+    run([
+      "lincheck", "selfcheck", "--model", "register", "--seeds", "-3", "--processes",
+      "2", "--ops", "2",
+    ]),
+    content="2",
+  )
+}
+
+///|
+/// 守护：`--seeds 0`（钳制为 1 轮）与正数必须照旧 PASS。
+test "LC-19 守护: --seeds 0 仍按既有规则跑一轮，正数照旧" {
+  inspect(
+    run([
+      "lincheck", "selfcheck", "--model", "register", "--seeds", "0", "--processes",
+      "2", "--ops", "2",
+    ]),
+    content="0",
+  )
+  inspect(
+    run([
+      "lincheck", "selfcheck", "--model", "register", "--seeds", "2", "--processes",
+      "2", "--ops", "2",
+    ]),
+    content="0",
+  )
+}

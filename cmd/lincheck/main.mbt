@@ -731,6 +731,12 @@ fn cmd_visualize(cli : Cli) -> Int32 raise {
 /// `docs/DEMO.md:176-181` 写明、`cli_exit_code_test.mbt` 锁着 exit 0）。
 ///
 /// 返回 `false` 时原因已经打到 stderr，调用方只需 exit 2。
+///
+/// `--seeds`（LC-19）是同一个守卫轴的第三个参数：`cmd_selfcheck` 把
+/// `seeds < 1` 钳成 1 轮，于是 `--seeds -3` 静默跑 1 轮并 PASS。危害比
+/// `--ops -1` 小（真的做了工作，头部也如实报 `seeds=1`），但归类相同 ——
+/// 负数不是计数。`--seeds 0` 保持钳制：1 轮是实打实的工作，与 `--ops 0`
+/// 的「一条历史都没生成」不是一回事。
 fn count_args_non_negative(cli : Cli) -> Bool {
   if cli.ops_per_process < 0 {
     eprintln(
@@ -741,6 +747,12 @@ fn count_args_non_negative(cli : Cli) -> Bool {
   if cli.processes < 0 {
     eprintln(
       "用法错误: --processes \{cli.processes} 不能为负——客户端数是非负计数，钳成 1 等于替用户改写意图；--processes 0 按既有契约钳制为 1",
+    )
+    return false
+  }
+  if cli.seeds < 0 {
+    eprintln(
+      "用法错误: --seeds \{cli.seeds} 不能为负——种子轮数是非负计数，钳成 1 等于替用户改写工作量；--seeds 0 按既有契约跑 1 轮",
     )
     return false
   }
