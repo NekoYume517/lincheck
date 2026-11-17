@@ -1,8 +1,14 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "NekoYume517/lincheck/cmd/lincheck"
 
+import {
+  "NekoYume517/lincheck/src",
+}
+
 // Values
 pub fn jsonl_error_text(String, Error) -> String
+
+pub fn no_witness_reason_text(Int32, @src.CheckOutcome) -> String
 
 pub fn parse_double_arg(String) -> Double?
 
