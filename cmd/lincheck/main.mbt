@@ -593,10 +593,29 @@ fn cmd_visualize(cli : Cli) -> Int32 raise {
 // ── gen ───────────────────────────────────────────────────────────────
 
 ///|
+/// `--concurrency` 的域是 `[0, 1]`（`API.md` §5：0 = 全串行，1 = 完全随机并发）。
+///
+/// 库层 `generate_consistent` / `generate_random` 对越界值做钳制，那是给
+/// **程序化调用方**的既有行为，保留不动。但 CLI 是用户入口：把 `2.5` 悄悄换成
+/// `1.0`、把 `-0.5` 换成 `0`，等于替用户改写意图，而用户拿到的历史与他写的
+/// 参数毫无关系——与 `--ops` / `--processes` 越界同口径，必须 exit 2。
+///
+/// 注意「域外」与「小数」是两件事：并发度是期望值不是计数，`0.5` 照旧合法。
+fn concurrency_in_domain(value : Double) -> Bool {
+  value >= 0.0 && value <= 1.0
+}
+
+///|
 fn cmd_gen(cli : Cli) -> Int32 {
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
+  }
+  if !concurrency_in_domain(cli.concurrency) {
+    eprintln(
+      "用法错误: --concurrency \{cli.concurrency} 超出取值范围 [0, 1]（0 = 全串行，1 = 完全随机并发）",
+    )
+    return EXIT_USAGE
   }
   // 规模参数先校验：`processes × ops_per_process` 是用户可控的 Int32 乘积，
   // 溢出会让生成器回绕出一个毫不相关的循环上界（最坏的一档回绕成 0，
