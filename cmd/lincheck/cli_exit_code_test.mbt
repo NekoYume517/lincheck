@@ -489,3 +489,32 @@ test "LC-8: NoWitness 结语的三态分流（Unknown 不得编造成因）" {
   assert_true(unknown_text != race)
   assert_true(data != race)
 }
+
+// ============================================================
+// LC-3：非法区间的时间轴
+// ============================================================
+
+///|
+/// `start > end` 是「文件读得懂但无法判定」→ `visualize` 必须仍是 exit 3
+/// （`docs/exit-codes.md` 的契约：不是 `4`「读不到」，也不是 `2`「命令错了」）。
+///
+/// 这一条只锁退出码；「不许画反向轴」由库层 `src/audit_invalid_axis_test.mbt`
+/// 锁 `render_timeline` 的输出（CLI 的 stdout 在测试里取不到）。
+test "LC-3: 非法区间上 visualize 仍是 exit 3（不擅自改判定）" {
+  let path = lc_write(
+    "invalid_interval.jsonl", "{\"id\":0,\"process\":0,\"kind\":{\"tag\":\"Read\"},\"result\":{\"tag\":\"Value\",\"value\":0},\"start\":100,\"end\":0}\n",
+  )
+  if path.length() == 0 {
+    fail("夹具写入失败")
+  }
+  inspect(run(["lincheck", "visualize", "--history", path]), content="3")
+  // 同一份输入下 check 与 visualize 必须同口径（都是一个搜索、同一份配置）。
+  inspect(
+    run(["lincheck", "check", "--history", path, "--model", "register"]),
+    content="3",
+  )
+  inspect(
+    run(["lincheck", "minimize", "--history", path, "--model", "register"]),
+    content="3",
+  )
+}

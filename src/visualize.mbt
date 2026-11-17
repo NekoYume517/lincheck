@@ -157,9 +157,26 @@ fn layout_row(
 
 ///|
 /// 渲染全部操作的时间轴（内部实现，ops 可以是子集）
+///
+/// 任何 `start > end` 的操作都会让「时间轴」这个概念本身不成立：它是把时间戳
+/// 映射到列号的单调函数，而倒序区间没有可映射的位置。此时**不画**，改为一句
+/// 明确的说明（2026-11-17 审计 LC-3）。
+///
+/// 旧实现在这种输入上仍然照画：`tmin=100 / tmax=0` 让轴标签变成
+/// `[100..0]`、`span < 0` 触发 `col_of` 的饱和降级，于是同一段输出里既有
+/// 「时间 [100..0]」又有一条画在 0 列的横条 —— 数字全对、图自相矛盾，
+/// 与上一轮 LC-D2（列号 Int64 回绕）同族。
+///
+/// 注意这只改**渲染**，不改判定：`start > end` 的退出码仍由 `check` 的
+/// `Unknown`（3）决定，`docs/exit-codes.md` 的契约一个字都不动。
 fn render_ops(ops : Array[Operation], scale : Int32) -> String {
   if ops.length() == 0 {
     return "(空历史)\n"
+  }
+  for op in ops {
+    if op.start > op.end {
+      return "（区间非法：存在 start > end 的操作，时间轴不成立，已省略）\n"
+    }
   }
   // 时间范围
   let mut tmin = ops[0].start
