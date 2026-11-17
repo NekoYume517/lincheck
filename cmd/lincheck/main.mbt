@@ -624,6 +624,45 @@ fn cmd_visualize(cli : Cli) -> Int32 raise {
 // ── gen ───────────────────────────────────────────────────────────────
 
 ///|
+/// 计数值（`--processes` / `--ops`）不得为负（LC-14，2026-11-17-b 审计）。
+///
+/// 库层把 `processes < 1` 钳成 1、把 `ops_per_process < 0` 钳成 0，那是给
+/// **程序化调用方**的既有行为（`total_ops_checked` 与两个生成器都这么写，
+/// `src/audit_round6_test.mbt` 锁着这条库级语义）。但 CLI 是用户入口，
+/// 钳制在两条命令上都会把一次笔误变成一个看起来正常的产物：
+///
+/// ```text
+/// $ lincheck gen --model register --processes 2 --ops -1 --seed 1
+/// （没有任何输出）                                  exit 0   # 空历史 + 成功
+/// $ lincheck gen --model register --processes -2 --ops 2 --seed 1
+/// {"id":0,"process":0,...}                          exit 0   # 写了 -2，拿到 1 个客户端
+/// ```
+///
+/// 第一条尤其危险：这份空历史随后被 `check` 消费时会得到
+/// `{"verdict":"linearizable","ops":0}` —— 一条流水线就此拿到「通过」的空结果，
+/// 与 LC-1（`selfcheck --ops 0` 空跑 PASS）同一族。那一轮只修了 `selfcheck`
+/// 这一侧，`gen` 这一侧的镜像缺口留在这里。**显式的空历史只能由 `--ops 0`
+/// 表达**；`--processes 0` 仍然钳制为 1（2026-11-10 LC-A3 的显式契约，
+/// `docs/DEMO.md:176-181` 写明、`cli_exit_code_test.mbt` 锁着 exit 0）。
+///
+/// 返回 `false` 时原因已经打到 stderr，调用方只需 exit 2。
+fn count_args_non_negative(cli : Cli) -> Bool {
+  if cli.ops_per_process < 0 {
+    eprintln(
+      "用法错误: --ops \{cli.ops_per_process} 不能为负——负数不是操作数，钳成 0 等于静默给出一份空历史；要空历史请写 --ops 0",
+    )
+    return false
+  }
+  if cli.processes < 0 {
+    eprintln(
+      "用法错误: --processes \{cli.processes} 不能为负——客户端数是非负计数，钳成 1 等于替用户改写意图；--processes 0 按既有契约钳制为 1",
+    )
+    return false
+  }
+  true
+}
+
+///|
 /// `--concurrency` 的域是 `[0, 1]`（`API.md` §5：0 = 全串行，1 = 完全随机并发）。
 ///
 /// 库层 `generate_consistent` / `generate_random` 对越界值做钳制，那是给
@@ -641,6 +680,11 @@ fn cmd_gen(cli : Cli) -> Int32 {
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
+  }
+  // 计数符号先于取值域：`--ops -1` 与 `--concurrency 2.5` 是两类错误，
+  // 前者连「规模」都不是（LC-14），后者是域外值（LC-5）。
+  if !count_args_non_negative(cli) {
+    return EXIT_USAGE
   }
   if !concurrency_in_domain(cli.concurrency) {
     eprintln(
@@ -736,6 +780,11 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
   let model = match require_model(cli) {
     Some(m) => m
     None => return EXIT_USAGE
+  }
+  // 负计数与 `gen` 同口径先拒（LC-14）：`selfcheck --processes -1` 曾在
+  // 钳制后「正常」跑完并打出 PASS，而用户写的客户端数根本不存在。
+  if !count_args_non_negative(cli) {
+    return EXIT_USAGE
   }
   // 与 gen 共用同一份规模校验，并额外要求「至少一个操作」。
   // 库层生成器对不可用规模（含 0 条）的兜底是空历史；CLI 若不在此拒绝，
