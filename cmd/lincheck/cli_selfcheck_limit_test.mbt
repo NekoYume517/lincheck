@@ -77,3 +77,24 @@ test "selfcheck: 乘积溢出或超上限不得空跑 PASS" {
     inspect(run(args), content="2")
   }
 }
+
+///|
+/// `selfcheck` 的 PASS 必须**每一档都真的注入过一次**（2026-11-17 审计 LC-7）。
+///
+/// 结论行现在要求 `failed == 0 && injected_missed == 0 && injected == total`。
+/// 最后一条今天的取值恒为真（`n ≥ 1 ⇒ 注入必成功`，见
+/// `src/audit_inject_invariant_test.mbt` 里的可证明性与 4 模型 × 6 规模断言），
+/// 所以这条用例是**可达的守护**：四个模型 × 多个 seed 都必须仍然 PASS。
+/// 一旦 `inject_violation` 或 `result_candidates` 被改坏到「合法历史改不动」，
+/// 这里会先从 0 变成 1，从而在 CLI 上与库层不变量同时报警。
+test "selfcheck 守护: 四模型多档规模仍然 PASS（注入不是空转）" {
+  for model in ["register", "counter", "set", "queue"] {
+    inspect(
+      run([
+        "lincheck", "selfcheck", "--model", model, "--seeds", "5", "--ops", "2",
+        "--processes", "2",
+      ]),
+      content="0",
+    )
+  }
+}

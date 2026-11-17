@@ -763,7 +763,18 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
   println(
     "  · 注入违规被发现：\{injected - injected_missed} / \{injected}",
   )
-  if failed == 0 && injected_missed == 0 {
+  if injected < total {
+    // 防御性诊断（当前不可达，见 src/audit_inject_invariant_test.mbt 的可证明性）：
+    // 一旦注入模板改坏到「合法历史改不动」，PASS 会变成无证据通过，
+    // 这行必须把原因说出来，而不是只留一个 0 / 0。
+    println(
+      "    - 未产生注入的 seed：\{total - injected}（注入模板为空，或本配置下所有单点改写都能被模型吸收）",
+    )
+  }
+  // PASS 的判据必须**同时**覆盖两件事：合法历史不被误判，且每一档都真的做过
+  // 一次注入检出。旧判据只看 failed 与 injected_missed，于是「一条都没注入」
+  // 也算通过 —— 那正是「注入违规被发现：0 / 0 → PASS」的来源。
+  if failed == 0 && injected_missed == 0 && injected == total {
     println("结果：PASS")
     EXIT_OK
   } else {
