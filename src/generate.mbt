@@ -245,19 +245,44 @@ pub fn[M : Model] generate_consistent(model : M, config : GenConfig) -> History 
   }
 
   // —— 第 3 步：只拉宽（end 往后、start 往前），不破坏原有全序 ——
+  //
+  // 拉宽还必须尊重**同一进程**的先后：一个客户端一次只能有一个在途操作，
+  // 它的下一条要等上一条返回之后才开始。同进程的邻居下标相差 `processes`
+  //（组装时 `process = m % processes`），所以：
+  //   · processes >= 2 时这一对邻居比相邻操作更远，取 min/max 后**产物逐字节
+  //     不变**（`generate_test` 的确定性断言 + 本文件的手工锚点都覆盖到）；
+  //   · processes == 1 时它就是相邻操作，于是单客户端历史必然串行
+  //     （2026-11-17 审计 LC-6：旧实现在这里能造出「同一 proc 两条在途操作」，
+  //     物理上不可能，也让 selfcheck 的「合法历史」前提失效）。
+  let step = processes
   let mut k = 0
   while k < n {
     if rng.chance(concurrency) {
       // 3a. 把 end 往后推，制造与后继的重叠
       let widen = 1L + rng.below(4).to_int64()
-      let limit = if k + 1 < n { ends[k + 1] } else { ends[k] + 4L }
+      let mut limit = if k + 1 < n { ends[k + 1] } else { ends[k] + 4L }
+      if k + step < n {
+        // 同进程后继开始前，本操作必须已返回：end <= 后继 start（相等 = 紧接，不算重叠）。
+        let same_process_limit = starts[k + step]
+        if same_process_limit < limit {
+          limit = same_process_limit
+        }
+      }
       let target = ends[k] + widen
       ends[k] = if target > limit { limit } else { target }
     }
     if rng.chance(concurrency) && k > 0 {
       // 3b. 把 start 往前拉，制造与前驱的重叠
       let widen = 1L + rng.below(4).to_int64()
-      let floor = starts[k - 1]
+      let mut floor = starts[k - 1]
+      if k >= step {
+        // 同进程前驱返回之后本操作才可能开始：start >= 前驱 end（相等 = 紧接）。
+        // （由 3a 的同一个上界可知 floor <= starts[k]，因此这里只会往左拉。）
+        let same_process_floor = ends[k - step]
+        if same_process_floor > floor {
+          floor = same_process_floor
+        }
+      }
       let target = starts[k] - widen
       starts[k] = if target < floor { floor } else { target }
     }
