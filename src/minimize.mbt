@@ -740,6 +740,12 @@ pub fn no_explainable_witness_text(
 /// `reason` 取 `violation_reason()` 的两个值：`"data-inconsistency"`
 /// （见证是 depth 0 的单操作 → 数据自相矛盾）与 `"concurrency-race"`
 /// （其余 → 竞态，最小见证需人工从 check 的 witness 里读）。
+///
+/// 第三个取值 `"unknown"`（2026-11-17 审计 LC-8）用于「拿不到成因」的情形：
+/// 判定成因要靠再查一次历史，而那次检查可能**没有结论**（预算耗尽 / 证据不完整）。
+/// 此时既不能断言竞态、也不能断言自相矛盾——编造一个成因会把调试者引向错误方向。
+/// 调用方必须显式传 `"unknown"`，不要靠 `else` 兜底：兜底分支默认走竞态，
+/// 正是这条缺陷的来源。
 pub fn no_explainable_witness_text_for(
   total : Int32,
   min_witness : Int32,
@@ -749,6 +755,9 @@ pub fn no_explainable_witness_text_for(
   if reason == "data-inconsistency" {
     base +
     "这通常意味着历史数据自相矛盾（例如初值 0 上记录了 CAS 返回 true），而不是并发交错导致的竞态。"
+  } else if reason == "unknown" {
+    base +
+    "成因未能确定：用于判定成因的那次检查没有给出结论（预算耗尽或证据不完整），因此既不能断言这是并发竞态，也不能断言是数据自相矛盾。请放开预算后重跑，或直接看 check 的输出。"
   } else {
     base +
     "注意这与「数据自相矛盾」不同：该反例属于并发竞态，压缩后的见证无法同时保留可解释的同伴操作（2-op 竞态对本身就是完整成因）。请直接看 check 输出的 witness。"

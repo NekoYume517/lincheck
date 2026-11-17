@@ -165,3 +165,40 @@ test "minimize unknown: 删除复验 Unknown 不得声称必然变合法" {
     _ => fail("前 8 次快速 apply 应足以得到确定见证")
   }
 }
+
+///|
+/// 2026-11-17 审计 LC-8：`NoWitness` 结语的**成因分类**也必须三态。
+///
+/// `no_explainable_witness_text_for` 的 `reason` 只有两个取值时，
+/// 调用方 `cmd_minimize` 把「拿不到成因」的 `Unknown` 折成 `"concurrency-race"`
+/// （`main.mbt` 的 NoWitness 分支：`_ => "concurrency-race"`）。于是用户的
+/// 历史里如果既没有证据说是竞态、也没有证据说是数据自相矛盾，工具会**编造**
+/// 一个成因，把他往错误方向引。这是上一轮「Unknown 不得退化成确定结论」
+/// 同一主题的残余（NoWitness 路径）。
+///
+/// 修法：`reason` 增加第三种取值 `"unknown"`，文案改成如实说明
+/// 「成因未定，既不能断言竞态也不能断言自相矛盾」。
+///
+/// 本用例在修复前会红：`unknown` 落进 `else`，与竞态文本逐字节相同。
+test "minimize unknown: NoWitness 结语的成因分类不得把未知折成竞态" {
+  let data = no_explainable_witness_text_for(
+    3,
+    MIN_WITNESS,
+    "data-inconsistency",
+  )
+  let race = no_explainable_witness_text_for(3, MIN_WITNESS, "concurrency-race")
+  let unknown = no_explainable_witness_text_for(3, MIN_WITNESS, "unknown")
+  // 三条分支必须互不相同（否则「分类」是假的）。
+  assert_true(unknown != race)
+  assert_true(unknown != data)
+  assert_true(data != race)
+  // 未知分支不得做出任何一个**具体成因断言**。
+  // 判别短语取自两个已知分支各自的断言句：未知分支可以在「既不能断言 A 也
+  // 不能断言 B」的否定句里提到这两个词，但不得出现断言句本身。
+  assert_true(!unknown.contains("该反例属于并发竞态"))
+  assert_true(!unknown.contains("这通常意味着历史数据自相矛盾"))
+  assert_true(unknown.contains("成因未能确定"))
+  // 已知分支的措辞保持不变（既有 CLI 输出依赖它）。
+  assert_true(data.contains("这通常意味着历史数据自相矛盾"))
+  assert_true(race.contains("该反例属于并发竞态"))
+}

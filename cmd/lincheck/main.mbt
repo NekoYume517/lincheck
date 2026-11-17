@@ -419,6 +419,30 @@ fn cmd_check(cli : Cli) -> Int32 raise {
 // ── minimize ──────────────────────────────────────────────────────────
 
 ///|
+/// `NoWitness` 结语：按**再查一次**的结论分流成因，三态必须透传。
+///
+/// - `Violation(v)`：`violation_reason(v)` 给出 `data-inconsistency` 或
+///   `concurrency-race`，交给库层文案分流；
+/// - 其余（`Unknown` / `Linearizable`）：成因**未定**，传 `"unknown"`。
+///   这里绝不能兜底成 `concurrency-race`：那会把一次没跑完的检查编造成
+///   「这是并发竞态」，正是 `docs/exit-codes.md` 三态哲学要避免的事
+///   （同一主题上一轮已在单操作缓存、ddmin/witness、删除复验、by-process
+///   四处修过，NoWitness 的成因分流是第五处）。
+///
+/// 标 `pub` 仅为可测性（理由同 `parse_int_arg`）：错误文本是这条命令的可观测
+/// 输出，主包的 `*_test.mbt` 只能看到 pub 符号。
+pub fn no_witness_reason_text(
+  original_n : Int32,
+  outcome : @lib.CheckOutcome,
+) -> String {
+  let reason = match outcome {
+    @lib.Violation(v) => @lib.violation_reason(v)
+    _ => "unknown"
+  }
+  @lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, reason)
+}
+
+///|
 /// 带缩进的操作列表
 fn render_ops_indented(ops : Array[@lib.Operation]) -> String {
   let sb = StringBuilder()
@@ -486,12 +510,12 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
         // 「数据自相矛盾」，但 2-op stale read 这类竞态对同样走 NoWitness
         // （可解释性守卫拒收「线性一致的同伴」），与 check --json 的
         // reason=concurrency-race 自相矛盾。用同一份 check 判定分流。
-        let reason = match @lib.check(history, model, cfg) {
-          @lib.Violation(v) => @lib.violation_reason(v)
-          _ => "concurrency-race"
-        }
+        // 分流必须三态（LC-8，2026-11-17 审计）：这次再查也可能没有结论
+        // （预算在两次搜索之间被耗掉 / 机器负载变化），此时既不能断言竞态、
+        // 也不能断言自相矛盾。旧实现写成 `_ => "concurrency-race"`，
+        // 把一个「不知道」编造成了具体成因。
         println(
-          "  \{@lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, reason)}",
+          "  \{no_witness_reason_text(original_n, @lib.check(history, model, cfg))}",
         )
       }
       EXIT_VIOLATION

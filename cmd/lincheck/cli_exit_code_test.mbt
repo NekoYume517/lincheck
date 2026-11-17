@@ -426,3 +426,66 @@ test "LC-5 守护: 域内并发度仍然接受（0 / 0.5 / 1）" {
     )
   }
 }
+
+// ============================================================
+// LC-8：NoWitness 结语的成因分流必须三态
+// ============================================================
+
+///|
+/// 一条孤立非法的操作（6 个字段写全，供构造 `Violation` 用）。
+fn lc_bad_op(id : Int32) -> @lib.Operation {
+  @lib.Operation::{
+    id,
+    process: 0,
+    kind: @lib.Read,
+    result: @lib.Value(0),
+    start: 0L,
+    end: 1L,
+  }
+}
+
+///|
+/// `minimize` 的 `NoWitness` 分支会为「按成因给方向」再查一次历史。
+/// 那次检查**可能没有结论**，此时结语不得编造成因（LC-8）。
+///
+/// 修复前实测路径：`main.mbt` 写成 `_ => "concurrency-race"`，
+/// 于是 `Unknown` 与 `Linearizable` 都被报成「该反例属于并发竞态」——
+/// 与 `docs/exit-codes.md` 的三态哲学冲突（「不知道」不等于「竞态」）。
+test "LC-8: NoWitness 结语的三态分流（Unknown 不得编造成因）" {
+  // 1) 再查没有结论 → 成因未定，两个具体成因的**断言句**都不许出现
+  //    （否定句「既不能断言竞态、也不能断言自相矛盾」是允许的）。
+  let unknown_text = no_witness_reason_text(
+    8,
+    @lib.Unknown("超过时间预算 1ms"),
+  )
+  assert_true(unknown_text.contains("成因未能确定"))
+  assert_true(!unknown_text.contains("该反例属于并发竞态"))
+  assert_true(
+    !unknown_text.contains("这通常意味着历史数据自相矛盾"),
+  )
+  // 2) 再查确认「数据自相矛盾」（depth 0 + 单操作见证）→ 保持既有措辞。
+  let data = no_witness_reason_text(
+    8,
+    @lib.Violation(@lib.Violation::{
+      ops: [lc_bad_op(0)],
+      depth: 0,
+      explanation: "",
+    }),
+  )
+  assert_true(data.contains("这通常意味着历史数据自相矛盾"))
+  // 3) 再查确认「并发竞态」（见证两条以上）→ 同样保持既有措辞。
+  let race = no_witness_reason_text(
+    8,
+    @lib.Violation(@lib.Violation::{
+      ops: [lc_bad_op(0), lc_bad_op(1)],
+      depth: 0,
+      explanation: "",
+    }),
+  )
+  assert_true(race.contains("该反例属于并发竞态"))
+  assert_true(!race.contains("这通常意味着历史数据自相矛盾"))
+  // 三条分支互不相同：分类不能有两条落到同一段文本。
+  assert_true(unknown_text != data)
+  assert_true(unknown_text != race)
+  assert_true(data != race)
+}
