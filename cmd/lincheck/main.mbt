@@ -158,17 +158,56 @@ fn is_ascii_digits(s : String) -> Bool {
 }
 
 ///|
+/// 一段无符号十进制数字 → `Int64?`（溢出返回 `None`）。
+///
+/// 存在的理由：`parse_double_arg` 的两段原本都走 `parse_int_arg`（Int32），
+/// 于是「位数多」被当成「参数值非法」（2026-11-17-b 审计 LC-15：
+/// `--concurrency 0.3000000000` 判 exit 2，而 `0.3000000000` 就是 `0.3`）。
+/// 容量是实现细节，不该出现在语法判据里。
+fn parse_unsigned_int64(s : String) -> Int64? {
+  if s.length() == 0 {
+    return None
+  }
+  let mut acc : Int64 = 0L
+  for ch in s.to_array() {
+    if !ch.is_ascii_digit() {
+      return None
+    }
+    let d = (ch.to_int() - '0'.to_int()).to_int64()
+    if acc > (9223372036854775807L - d) / 10L {
+      return None
+    }
+    acc = acc * 10L + d
+  }
+  Some(acc)
+}
+
+///|
+/// 小数段参与计算的位数上界。
+///
+/// `Double` 在 `[0, 1]` 上的分辨率约 1e-16，第 `MAX_FRACTION_DIGITS` 位之后
+/// 的数字既不可能改变最终值、也不可能改变「是否落在 `[0, 1]` 域内」的判定
+/// （这一点对 `1.000…` 与 `0.999…` 两端同样成立：截断后的值仍在原值同侧，
+/// 且与正确舍入的 Double 相差不超过 1 ulp）。所以长尾小数**截断**而不是
+/// 报用法错误——位数不是用户该操心的事（LC-15）。
+const MAX_FRACTION_DIGITS : Int32 = 18
+
+///|
 /// 解析 "0.5" / "1" 这类简单浮点。
 ///
 /// 语法只有一种：`'-'? digits ('.' digits)?`。符号必须对整个数值生效，
 /// **每一段都必须是无符号数字**。
 ///
-/// 两条历史教训（都属「静默发明输入」）：
+/// 三条历史教训：
 /// - 早期把负号塞给整数段，`-0.5` 变成 `+0.5`、`-1.5` 变成 `-0.5`；
-/// - 现在两段分别喂给带符号的 `parse_int_arg` 时，符号还能出现在段内：
+/// - 把两段分别喂给带符号的 `parse_int_arg` 时，符号还能出现在段内：
 ///   `1.-5` = 1 + (-5)/100 = **0.95**、`0.-1` = **-0.01**（看着正数解析出负数）、
 ///   `--1.5` = **0.5**（两层负号互相抵消）。这些都不是可接受的输入，
 ///   调用方必须能靠 `None` 报用法错误，而不是拿到一个被悄悄换过的数值。
+/// - 两段都按 **Int32** 解析过：`0.3000000000`（`0.3` 的另一种写法）、
+///   `0.12345678901`、`2147483648` 都被判成「参数值非法」——判据变成了
+///   Int32 容量而不是语法（LC-15）。现在两段按 Int64 累加，小数段超过
+///   `MAX_FRACTION_DIGITS` 位时截断。
 ///
 /// 标 `pub` 仅为可测性，理由同 parse_int_arg。
 pub fn parse_double_arg(s : String) -> Double? {
@@ -184,7 +223,7 @@ pub fn parse_double_arg(s : String) -> Double? {
     if !is_ascii_digits(whole_s) {
       return None
     }
-    match parse_int_arg(whole_s) {
+    match parse_unsigned_int64(whole_s) {
       Some(v) => if neg { Some(-v.to_double()) } else { Some(v.to_double()) }
       None => None
     }
@@ -195,17 +234,25 @@ pub fn parse_double_arg(s : String) -> Double? {
     if !is_ascii_digits(whole_s) || !is_ascii_digits(frac_s) {
       return None
     }
-    let whole = match parse_int_arg(whole_s) {
+    let whole = match parse_unsigned_int64(whole_s) {
       Some(v) => v
       None => return None
     }
-    let frac = match parse_int_arg(frac_s) {
+    // 只取前 MAX_FRACTION_DIGITS 位参与计算（见常量注释：更远的位对
+    // Double 与域判定都没有影响），scale 也按截断后的位数取。
+    let used = if frac_s.length() > MAX_FRACTION_DIGITS {
+      MAX_FRACTION_DIGITS
+    } else {
+      frac_s.length()
+    }
+    let frac_head = frac_s.substring(start=0, end=used)
+    let frac = match parse_unsigned_int64(frac_head) {
       Some(v) => v
       None => return None
     }
     let mut scale = 1.0
     let mut i = 0
-    while i < frac_s.length() {
+    while i < used {
       scale = scale * 10.0
       i = i + 1
     }

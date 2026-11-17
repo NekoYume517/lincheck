@@ -98,6 +98,56 @@ test "parse_double_arg：小数段与整数段不得再带符号" {
 }
 
 ///|
+/// 2026-11-17-b 审计 LC-15：**小数段与整数段都不该被当成 Int32 解析**。
+///
+/// 旧实现把两段都喂给 `parse_int_arg`（Int32），于是「数值本身完全合法、
+/// 只是位数多」的拼写被判成「参数值非法」：
+///
+/// ```text
+/// $ lincheck gen ... --concurrency 0.3000000000      # 0.3 的另一种写法
+/// 参数错误（缺值或数值非法）                          exit 2
+/// $ lincheck gen ... --concurrency 0.12345678901     # 11 位小数
+/// 参数错误（缺值或数值非法）                          exit 2
+/// ```
+///
+/// 判据是 Int32 容量（小数段 10 位、且值不得超过 2147483647），与语法
+/// `'-'? digits ('.' digits)?` 毫无关系：`0.1234567890`（小数段 1234567890）
+/// 被接受，`0.3000000000`（3000000000）被拒——同一种形态，差一位就翻脸。
+/// DISCIPLINE §5.6 的口径是「域内合法值不许被守卫误伤」，这里被误伤的是
+/// 语法层合法、且落在 `[0, 1]` 域内的值。
+///
+/// 修法：两段改用 Int64 累加（小数段超过 18 位时截断——Double 在 `[0,1]`
+/// 上的分辨率约 1e-16，第 19 位之后对最终值与域判定都不可能有影响），
+/// 现有输入的取值逐个不变（`0.25` / `0.5` 走的还是同一句
+/// `frac.to_double() / scale`）。
+test "LC-15: 小数段/整数段的位数不受 Int32 容量限制（0.3000000000 必须能解析）" {
+  // 修复前前四条都返回 None（CLI 上表现为 exit 2「参数值非法」）
+  assert_eq(parse_double_arg("0.3000000000"), Some(0.3))
+  assert_eq(parse_double_arg("0.1234567890"), Some(0.123456789))
+  assert_eq(parse_double_arg("0.123456789012"), Some(0.123456789012))
+  assert_eq(parse_double_arg("-0.3000000000"), Some(-0.3))
+  // 整数段同理：修复前 `2147483648` 直接判「参数值非法」，交给域判定才对
+  assert_eq(parse_double_arg("2147483648"), Some(2147483648.0))
+  // 超过 18 位小数：仍然是**可解析的合法数值**，不再报语法错误（值按 18 位截断，
+  // 与 Double 的分辨率同量级），且必须留在域内。
+  match parse_double_arg("0.9999999999999999999999") {
+    Some(v) => assert_true(v > 0.9 && v <= 1.0)
+    None => fail("19 位小数的合法数值被误拒")
+  }
+  match parse_double_arg("0.1234567890123456789") {
+    Some(v) => assert_true(v > 0.12 && v < 0.13)
+    None => fail("19 位小数的合法数值被误拒")
+  }
+  // 真正的语法错误仍然必须拒（不能因为放宽位数把 LC-2 的严格化退回去）
+  assert_true(parse_double_arg("1.-5").is_empty())
+  assert_true(parse_double_arg("0.-1").is_empty())
+  assert_true(parse_double_arg("--1.5").is_empty())
+  assert_true(parse_double_arg("1.5x").is_empty())
+  assert_true(parse_double_arg("1.").is_empty())
+  assert_true(parse_double_arg(".5").is_empty())
+}
+
+///|
 /// 守护：严格化之后，合法形态一个都不能被误伤。
 test "parse_double_arg：合法形态仍然逐个接受" {
   assert_eq(parse_double_arg("0"), Some(0.0))
