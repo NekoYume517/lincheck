@@ -45,14 +45,19 @@ test "budget: 截断的搜索仍是 exit 3，--budget-ms 0 仍不设期限" {
   if path.length() == 0 {
     fail("夹具写入失败")
   }
-  // 1ms：2000 操作的完整搜索约 70ms，1ms 内必被截断 → 没有结论 → 3
-  inspect(
-    run([
-      "lincheck", "check", "--history", path, "--model", "register", "--budget-ms",
-      "1",
-    ]),
-    content="3",
-  )
+  // 1ms：2000 操作的完整搜索约 70ms（本机实测），1ms 内被截断 → 没有结论 → 3。
+  //
+  // 2026-11-17 审计 LC-13：这条原本严格断言 `3`。结论方向是对的（真跑完过 70ms，
+  // 要「1 ms 搜完」得比本机快 70 倍以上），但它仍然是**机器速度**进断言——
+  // 只要落在一个快得多（或负载截然不同）的环境上就会红，而实现一点没错。
+  // 「截断的搜索绝不返回 1」才是契约；`0`（快机器真跑完了）与 `3`（如实说不知道）
+  // 都是合法结论。所以这里锁「绝不是 1」，另用一份**确定会超时**的长历史
+  // （`cli_exit_code_test.mbt` 的 1201 操作夹具）把 `3` 那一档钉死。
+  let tight = run([
+    "lincheck", "check", "--history", path, "--model", "register", "--budget-ms",
+    "1",
+  ])
+  assert_true(tight == 0 || tight == 3)
   // 0：`<= 0` 表示不设期限，必须真的跑完并给出结论（这份历史线性一致 → 0）
   inspect(
     run([

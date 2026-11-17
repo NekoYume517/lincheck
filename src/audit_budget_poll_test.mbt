@@ -38,8 +38,15 @@ test "budget: 1ms budget stops within the first nodes, not at the 256th" {
     Violation(_) => abort("legal history reported as a violation")
   }
   assert_true(stats.timed_out)
-  // 核心断言：首个截止检查点不得等到第 256 个节点
+  // 回归目标：首个截止检查点不得等到第 256 个节点（旧实现的第一档）。
+  //
+  // 这条上界的**方向与负载同向**——机器越慢/越忙，explored 只会更小，
+  // 所以它在任何负载下都成立，属于契约（「小预算不该拖到第 256 个节点」），
+  // 不是「这台机器的速度」。
   assert_true(stats.explored < 256)
-  // 修复后实测 10 个节点左右；留 6 倍余量，避免在极快/极慢机器上飘
-  assert_true(stats.explored <= 64)
+  // 2026-11-17 审计 LC-13：这里原本还有一条 `explored <= 64`
+  //（「实测 10 个节点左右，留 6 倍余量」）。它把**机器变快**写成了失败条件：
+  // 比本机快 6 倍以上的机器上，1 ms 足以探索超过 64 个节点，用例红而实现是对的。
+  // 「轮询三档」的确定性契约改由 `audit_poll_due_wbtest.mbt` 直接锁 `poll_due`
+  //（纯函数、不看时钟、与机器无关），这里只保留方向安全的规模上界。
 }
