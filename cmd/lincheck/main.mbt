@@ -130,11 +130,38 @@ pub fn parse_int_arg(s : String) -> Int32? {
 }
 
 ///|
+/// 一串**无符号**十进制数字（非空）。
+///
+/// `parse_double_arg` 的两段（整数段、小数段）都必须满足它：符号只允许出现在
+/// 整个数值的最前面，段内出现符号不是"可以忽略的前缀"，而是非法输入。
+fn is_ascii_digits(s : String) -> Bool {
+  if s.length() == 0 {
+    return false
+  }
+  let mut ok = true
+  let mut i = 0
+  while i < s.length() {
+    let c = s[i]
+    if c < '0' || c > '9' {
+      ok = false
+    }
+    i = i + 1
+  }
+  ok
+}
+
+///|
 /// 解析 "0.5" / "1" 这类简单浮点。
 ///
-/// 符号必须对整个数值生效：小数部分只按无符号数解析，最后统一乘上
-/// 整体符号。直接把负号塞给整数段会让 `-0.5` 变成 `+0.5`（整数段是
-/// 0，负号被静默丢掉），`-1.5` 变成 `-0.5`。
+/// 语法只有一种：`'-'? digits ('.' digits)?`。符号必须对整个数值生效，
+/// **每一段都必须是无符号数字**。
+///
+/// 两条历史教训（都属「静默发明输入」）：
+/// - 早期把负号塞给整数段，`-0.5` 变成 `+0.5`、`-1.5` 变成 `-0.5`；
+/// - 现在两段分别喂给带符号的 `parse_int_arg` 时，符号还能出现在段内：
+///   `1.-5` = 1 + (-5)/100 = **0.95**、`0.-1` = **-0.01**（看着正数解析出负数）、
+///   `--1.5` = **0.5**（两层负号互相抵消）。这些都不是可接受的输入，
+///   调用方必须能靠 `None` 报用法错误，而不是拿到一个被悄悄换过的数值。
 ///
 /// 标 `pub` 仅为可测性，理由同 parse_int_arg。
 pub fn parse_double_arg(s : String) -> Double? {
@@ -146,18 +173,24 @@ pub fn parse_double_arg(s : String) -> Double? {
   }
   let parts = body.split(".").collect()
   if parts.length() == 1 {
-    match parse_int_arg(body) {
+    let whole_s = parts[0].to_owned()
+    if !is_ascii_digits(whole_s) {
+      return None
+    }
+    match parse_int_arg(whole_s) {
       Some(v) => if neg { Some(-v.to_double()) } else { Some(v.to_double()) }
       None => None
     }
   } else if parts.length() == 2 {
-    let whole = match parse_int_arg(parts[0].to_owned()) {
+    let whole_s = parts[0].to_owned()
+    let frac_s = parts[1].to_owned()
+    // 两段都是纯数字：`1.-5` / `0.-1` / `--1.5` 在这里被拒。
+    if !is_ascii_digits(whole_s) || !is_ascii_digits(frac_s) {
+      return None
+    }
+    let whole = match parse_int_arg(whole_s) {
       Some(v) => v
       None => return None
-    }
-    let frac_s = parts[1].to_owned()
-    if frac_s.length() == 0 {
-      return None
     }
     let frac = match parse_int_arg(frac_s) {
       Some(v) => v

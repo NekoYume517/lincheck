@@ -70,3 +70,42 @@ test "parse_double_arg：非法形态拒绝" {
   assert_true(parse_double_arg(".5").is_empty())
   assert_true(parse_double_arg("1.5x").is_empty())
 }
+
+///|
+/// 2026-11-17 审计 LC-2：**每一段都必须是纯数字**，符号只能出现在整个数值的最前面。
+///
+/// 旧实现把整数段与小数段分别喂给带符号的 `parse_int_arg`，于是：
+///
+/// ```text
+/// parse_double_arg("1.-5") = 1 + (-5)/100 = 0.95     # 负号进了小数段，
+///                                                   # 还被算进位数把 scale 放大 10 倍
+/// parse_double_arg("0.-1") = 0 + (-1)/100 = -0.01    # 看着正数，解析出负数
+/// parse_double_arg("--1.5") = -(-1 + 0.5)  = 0.5     # 两层负号互相抵消
+/// ```
+///
+/// 三者在 CLI 上都表现为「参数被接受、值被悄悄换成另一个数」
+/// （`--concurrency 1.-5` 实测等于 `--concurrency 0.95`，exit 0）。
+/// 契约是 `parse_double_arg` 只接受「可选符号 + 数字 + 可选小数 + 数字」，
+/// 其余一律 `None`（调用方据此报用法错误 exit 2）。
+test "parse_double_arg：小数段与整数段不得再带符号" {
+  assert_true(parse_double_arg("1.-5").is_empty())
+  assert_true(parse_double_arg("0.-1").is_empty())
+  assert_true(parse_double_arg("1.+5").is_empty())
+  assert_true(parse_double_arg("--1.5").is_empty())
+  assert_true(parse_double_arg("-+1.5").is_empty())
+  assert_true(parse_double_arg("1.-").is_empty())
+  assert_true(parse_double_arg("-1.-5").is_empty())
+}
+
+///|
+/// 守护：严格化之后，合法形态一个都不能被误伤。
+test "parse_double_arg：合法形态仍然逐个接受" {
+  assert_eq(parse_double_arg("0"), Some(0.0))
+  assert_eq(parse_double_arg("-0"), Some(-0.0))
+  assert_eq(parse_double_arg("1"), Some(1.0))
+  assert_eq(parse_double_arg("0.5"), Some(0.5))
+  assert_eq(parse_double_arg("-0.5"), Some(-0.5))
+  assert_eq(parse_double_arg("1.05"), Some(1.05))
+  assert_eq(parse_double_arg("0.001"), Some(0.001))
+  assert_eq(parse_double_arg("2147483647"), Some(2147483647.0))
+}
