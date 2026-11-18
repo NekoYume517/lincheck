@@ -1077,6 +1077,7 @@ fn flag_owners(flag : String) -> String {
 /// 一个函数同时管两件事。
 fn validate_flags(cmd : String, cli : Cli) -> Bool {
   let allowed = flags_for(cmd)
+  let mut selected_mode = ""
   for flag in cli.used {
     let mut ok = false
     for a in allowed {
@@ -1089,6 +1090,15 @@ fn validate_flags(cmd : String, cli : Cli) -> Bool {
         "用法错误: \{flag} 不适用于子命令 \{cmd}（它属于 \{flag_owners(flag)}）",
       )
       return false
+    }
+    if flag == "--consistent" || flag == "--random" || flag == "--inject" {
+      if selected_mode != "" && selected_mode != flag {
+        eprintln(
+          "用法错误: --consistent、--random、--inject 互斥，不能同时指定 \{selected_mode} 与 \{flag}",
+        )
+        return false
+      }
+      selected_mode = flag
     }
   }
   true
