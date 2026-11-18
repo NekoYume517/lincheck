@@ -183,13 +183,10 @@ fn parse_unsigned_int64(s : String) -> Int64? {
 }
 
 ///|
-/// 小数段参与计算的位数上界。
+/// 小数段参与计算的**有效数字**位数上界。
 ///
-/// `Double` 在 `[0, 1]` 上的分辨率约 1e-16，第 `MAX_FRACTION_DIGITS` 位之后
-/// 的数字既不可能改变最终值、也不可能改变「是否落在 `[0, 1]` 域内」的判定
-/// （这一点对 `1.000…` 与 `0.999…` 两端同样成立：截断后的值仍在原值同侧，
-/// 且与正确舍入的 Double 相差不超过 1 ulp）。所以长尾小数**截断**而不是
-/// 报用法错误——位数不是用户该操心的事（LC-15）。
+/// 长尾小数按有效数字截断而不是报用法错误（LC-15），但小数点后的前导零
+/// 不占这 18 位预算：它们决定数量级，不能把后面的第一个有效位挤掉（LC-22）。
 const MAX_FRACTION_DIGITS : Int32 = 18
 
 ///|
@@ -238,25 +235,51 @@ pub fn parse_double_arg(s : String) -> Double? {
       Some(v) => v
       None => return None
     }
-    // 只取前 MAX_FRACTION_DIGITS 位参与计算（见常量注释：更远的位对
-    // Double 与域判定都没有影响），scale 也按截断后的位数取。
-    let used = if frac_s.length() > MAX_FRACTION_DIGITS {
+    // 短小数保留原来的计算路径，避免无关的舍入漂移。超长小数先跳过
+    // 前导零，再取最多 18 位有效数字；缩放仍包含全部前导零。
+    let mut first_significant = 0
+    if frac_s.length() > MAX_FRACTION_DIGITS {
+      while first_significant < frac_s.length() &&
+            frac_s[first_significant] == '0' {
+        first_significant = first_significant + 1
+      }
+    }
+    let remaining = frac_s.length() - first_significant
+    let used = if remaining > MAX_FRACTION_DIGITS {
       MAX_FRACTION_DIGITS
     } else {
-      frac_s.length()
+      remaining
     }
-    let frac_head = frac_s.substring(start=0, end=used)
-    let frac = match parse_unsigned_int64(frac_head) {
-      Some(v) => v
-      None => return None
+    let mut fraction = 0.0
+    if used > 0 {
+      let frac_head = frac_s.substring(
+        start=first_significant,
+        end=first_significant + used,
+      )
+      let frac = match parse_unsigned_int64(frac_head) {
+        Some(v) => v
+        None => return None
+      }
+      fraction = frac.to_double()
     }
-    let mut scale = 1.0
-    let mut i = 0
-    while i < used {
-      scale = scale * 10.0
-      i = i + 1
+    let decimal_places = first_significant + used
+    if decimal_places <= 300 {
+      let mut scale = 1.0
+      let mut i = 0
+      while i < decimal_places {
+        scale = scale * 10.0
+        i = i + 1
+      }
+      fraction = fraction / scale
+    } else {
+      // 10^308 之后会溢出成 Infinity；逐位缩放可继续表示 subnormal。
+      let mut i = 0
+      while i < decimal_places {
+        fraction = fraction / 10.0
+        i = i + 1
+      }
     }
-    let value = whole.to_double() + frac.to_double() / scale
+    let value = whole.to_double() + fraction
     if neg {
       Some(-value)
     } else {
