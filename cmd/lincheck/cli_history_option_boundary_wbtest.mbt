@@ -25,14 +25,14 @@ fn history_boundary_write(name : String, text : String) -> String {
 }
 
 ///|
-test "history 不得把未知长选项吞成路径" {
+test "history 不得把选项吞成路径" {
   for command in ["check", "minimize", "visualize"] {
-    inspect(
-      run([
-        "lincheck", command, "--history", "--not-a-real-option", "--model", "register",
-      ]),
-      content="2",
-    )
+    for option in ["--not-a-real-option", "-h", "-x"] {
+      inspect(
+        run(["lincheck", command, "--history", option, "--model", "register"]),
+        content="2",
+      )
+    }
   }
 }
 

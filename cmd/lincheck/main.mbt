@@ -1156,10 +1156,12 @@ fn parse_from(cli : Cli, argv : Array[String], i : Int32) -> Cli? {
     parse_from({ ..cli, mode: "random", }, argv, i + 1)
   } else if flag == "--inject" {
     parse_from({ ..cli, mode: "inject", }, argv, i + 1)
-  } else if i + 1 >= argv.length() || argv[i + 1].has_prefix("--") {
-    // 长选项出现在值的位置时，当前带值参数就是缺值；不能只识别已知选项，
-    // 否则 `--history --unknown` 会把未知选项吞成路径，最终误报数据错误。
-    // 负数仍以单个 '-' 开头，不受影响；以 '--' 开头的真实路径可写成 './--name'。
+  } else if i + 1 >= argv.length() ||
+    argv[i + 1].has_prefix("--") ||
+    (flag == "--history" && argv[i + 1].has_prefix("-")) {
+    // 长选项出现在任何带值参数的位置都算缺值；路径还可能吞掉短选项，
+    // 所以 --history 对单个 '-' 前缀也按选项处理，而不是误报数据错误。
+    // 数值参数的负数不受影响；以 '-' 开头的真实路径可写成 './-name'。
     None
   } else {
     let value = argv[i + 1]
