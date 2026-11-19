@@ -3,8 +3,8 @@
 ## 结论
 
 - 基线：`moon info && moon build && moon test --target all` 全绿，native / JS 各 **281/281**；工作树干净。
-- 经 lead 批准的 10 项攻击面中，确认并修复 **3 类可复现缺陷**，形成 **4 个修复提交**（LC-20 的长、短选项边界分两次补全）。
-- 新增 **4 个确定性回归测试**。最终 native / JS 各 **285/285**；`moon check`、`moon fmt --check`、`moon build --target wasm` 均通过。
+- 经 lead 批准的 10 项攻击面中，确认并修复 **3 类可复现缺陷**，形成 **4 个修复提交**（LC-20 的长、短选项边界分两次补全）；随后追加 **CI-20** 新版编译器兼容性修复。
+- 新增 **4 个确定性回归测试**；CI-20 不改测试数量。最终 native / JS 各 **285/285**；`moon check`、`moon fmt --check`、`moon build --target wasm` 均通过。
 - 没有新增依赖机器速度或长时间忙等的测试；没有 push。
 - 证据目录（仓库外）：`D:\code\moonbit\audit\2026-11-20\lincheck`。
 
@@ -16,6 +16,7 @@
 | `db3b4dd` | `fix(cli)` | 已知/未知短选项在 `--history` 值位同样归类为用法错误 |
 | `11d5a88` | `fix(visualize)` | 有序对按下标去重，完全重复操作仍计入扫描进度 |
 | `74fda59` | `fix(cli)` | 带前导零的 Int32 最小值正确解析 |
+| CI-20（本次 HEAD） | `fix(model)` | 集中提升既有 trait 实现为方法，兼容 MoonBit 0.1.20261117 且保留原 API |
 
 ## 缺陷与复现
 
@@ -86,6 +87,18 @@ moon test --target native -p NekoYume517/lincheck/cmd/lincheck \
 - `int32-leading-zero-focused-green.log`
 - `int32-leading-zero-test-all.log`
 
+### 4. CI-20：MoonBit 0.1.20261117 trait 方法解析不兼容
+
+**位置**：四个具体模型、`AnyModel` 的 `Model` 实现，以及 `OpResult` 的 `Eq` 实现。
+
+**红证据**：CI 的 `moon check` 报出 27 个 4015 错误；本地用 0.1.20261117 实跑还覆盖到后续批次的 `AnyModel` 与测试内 `OpResult::equal` 错误。旧编译器会把 trait 实现自动提升为点调用，新版要求显式 `extend`。
+
+**修复**：仅新增 `src/extends.mbt`，集中声明四个具体模型与 `AnyModel` 的 `Model::{name,init,apply,accepts,state_eq,state_hash}`，以及 `OpResult` 的 `Eq::{equal}`。原生产代码、测试和点调用 API 均不改写；`moon info` 同步生成公开方法接口。测试总数保持 **285**。
+
+**验收**：0.1.20261117 与 pinned 0.1.20261102 分别执行 `moon check`、`moon fmt --check`、`moon info`、`moon test --target all`、`moon build --target wasm`；两套工具链均为 native / JS **285/285**，wasm 构建通过。
+
+**证据**：`ci20-latest-*.log`、`ci20-pinned-*.log`，以及仓库外的 `audit/2026-11-20/ci/lincheck-job.log`。
+
 ## 10 项攻击面复盘
 
 | 项 | 结果 |
@@ -108,6 +121,8 @@ moon test --target native -p NekoYume517/lincheck/cmd/lincheck \
 - `cmd/lincheck/cli_int_leading_zero_wbtest.mbt`（新增）
 - `src/visualize.mbt`
 - `src/audit_order_facts_duplicates_wbtest.mbt`（新增）
+- `src/extends.mbt`（CI-20 新增）
+- `src/pkg.generated.mbti`（CI-20 接口同步）
 - `REPORT.md`（本报告）
 
 ## 最终验证

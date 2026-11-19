@@ -148,6 +148,12 @@ pub(all) enum AnyModel {
   Set(SetModel)
   Queue(QueueModel)
 }
+pub fn AnyModel::accepts(Self, Array[Int32], OpKind, OpResult, OpResult) -> Bool
+pub fn AnyModel::apply(Self, Array[Int32], OpKind) -> (Array[Int32], OpResult)?
+pub fn AnyModel::init(Self) -> Array[Int32]
+pub fn AnyModel::name(Self) -> String
+pub fn AnyModel::state_eq(Self, Array[Int32], Array[Int32]) -> Bool
+pub fn AnyModel::state_hash(Self, Array[Int32]) -> Int32
 pub impl Model for AnyModel
 
 #derive(@debug.Debug)
@@ -176,6 +182,12 @@ pub(all) struct CheckStats {
 #derive(@debug.Debug)
 pub(all) struct CounterModel {
 }
+pub fn CounterModel::accepts(Self, Array[Int32], OpKind, OpResult, OpResult) -> Bool
+pub fn CounterModel::apply(Self, Array[Int32], OpKind) -> (Array[Int32], OpResult)?
+pub fn CounterModel::init(Self) -> Array[Int32]
+pub fn CounterModel::name(Self) -> String
+pub fn CounterModel::state_eq(Self, Array[Int32], Array[Int32]) -> Bool
+pub fn CounterModel::state_hash(Self, Array[Int32]) -> Int32
 pub impl Model for CounterModel
 
 pub(all) struct Expl {
@@ -229,6 +241,7 @@ pub(all) enum OpResult {
   Empty
   Nil
 }
+pub fn OpResult::equal(Self, Self) -> Bool
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Operation {
@@ -243,11 +256,23 @@ pub(all) struct Operation {
 #derive(@debug.Debug)
 pub(all) struct QueueModel {
 }
+pub fn QueueModel::accepts(Self, Array[Int32], OpKind, OpResult, OpResult) -> Bool
+pub fn QueueModel::apply(Self, Array[Int32], OpKind) -> (Array[Int32], OpResult)?
+pub fn QueueModel::init(Self) -> Array[Int32]
+pub fn QueueModel::name(Self) -> String
+pub fn QueueModel::state_eq(Self, Array[Int32], Array[Int32]) -> Bool
+pub fn QueueModel::state_hash(Self, Array[Int32]) -> Int32
 pub impl Model for QueueModel
 
 #derive(@debug.Debug)
 pub(all) struct RegisterModel {
 }
+pub fn RegisterModel::accepts(Self, Array[Int32], OpKind, OpResult, OpResult) -> Bool
+pub fn RegisterModel::apply(Self, Array[Int32], OpKind) -> (Array[Int32], OpResult)?
+pub fn RegisterModel::init(Self) -> Array[Int32]
+pub fn RegisterModel::name(Self) -> String
+pub fn RegisterModel::state_eq(Self, Array[Int32], Array[Int32]) -> Bool
+pub fn RegisterModel::state_hash(Self, Array[Int32]) -> Int32
 pub impl Model for RegisterModel
 
 pub(all) struct Rng {
@@ -266,6 +291,12 @@ type SearchState
 #derive(@debug.Debug)
 pub(all) struct SetModel {
 }
+pub fn SetModel::accepts(Self, Array[Int32], OpKind, OpResult, OpResult) -> Bool
+pub fn SetModel::apply(Self, Array[Int32], OpKind) -> (Array[Int32], OpResult)?
+pub fn SetModel::init(Self) -> Array[Int32]
+pub fn SetModel::name(Self) -> String
+pub fn SetModel::state_eq(Self, Array[Int32], Array[Int32]) -> Bool
+pub fn SetModel::state_hash(Self, Array[Int32]) -> Int32
 pub impl Model for SetModel
 
 #derive(@debug.Debug)
