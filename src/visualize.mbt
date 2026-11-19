@@ -326,7 +326,7 @@ fn count_ends_before(ends : Array[Int64], x : Int64) -> Int32 {
 }
 
 ///|
-/// 见证子集里成立的**有向**时间约束总数（`a != b && a.end < b.start`）。
+/// 见证子集里成立的**有向**时间约束总数（`i != j && a.end < b.start`）。
 ///
 /// 与 `order_facts` 的截断扫描不同，这里不做 O(k²) 的两两比较：把全部 `end`
 /// 排序后，对每条操作 `b` 二分出「有多少条 `end < b.start`」再求和，
@@ -392,7 +392,10 @@ pub fn order_facts(ops : Array[Operation]) -> String {
       // 旧实现把 `scanned += 1` 写在 `a != b` 判定之外，于是「已扫描 20000 对」
       // 实际只覆盖 19859 个真正的有序对，读者无法用它重算 `found`；
       // 实测同一句里 `found` 报 120、按「前 20000 个去重对」独立重算是 259。
-      if a != b {
+      // 必须按下标排除自比较：两个位置可以装着完全相同的 Operation。
+      // 若按 `a != b` 去重，这些真实有序对会从 scanned 中消失，摘要分母
+      // 仍是 n(n-1)，而扫描进度与截断判断却按另一个口径计算。
+      if i != j {
         if happens_before(a, b) {
           found = found + 1
           if shown < fact_limit {
