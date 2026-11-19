@@ -1156,9 +1156,9 @@ fn parse_from(cli : Cli, argv : Array[String], i : Int32) -> Cli? {
     parse_from({ ..cli, mode: "random", }, argv, i + 1)
   } else if flag == "--inject" {
     parse_from({ ..cli, mode: "inject", }, argv, i + 1)
-  } else if i + 1 >= argv.length() || all_flags().contains(argv[i + 1]) {
-    // 已知选项出现在值的位置时，当前带值参数就是缺值；不能把这个选项
-    // 吞成路径/模型名，更不能把随后的文件读取失败误报成数据错误。
+  } else if i + 1 >= argv.length() || argv[i + 1].has_prefix("--") {
+    // 长选项出现在值的位置时，当前带值参数就是缺值；不能只识别已知选项，
+    // 否则 `--history --unknown` 会把未知选项吞成路径，最终误报数据错误。
     // 负数仍以单个 '-' 开头，不受影响；以 '--' 开头的真实路径可写成 './--name'。
     None
   } else {
