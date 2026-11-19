@@ -110,10 +110,18 @@ pub fn parse_int_arg(s : String) -> Int32? {
   if body.length() == 0 {
     return None
   }
+  // 前导零不改变数值。先归一再处理 Int32::MIN，避免 "-0002147483648"
+  // 绕过最小值特判后被累加器误判为溢出；至少保留一位，空串已在上面拒绝。
+  let mut first_digit = 0
+  while first_digit < body.length() - 1 && body[first_digit] == '0' {
+    first_digit = first_digit + 1
+  }
+  if first_digit > 0 {
+    body = body.substring(start=first_digit, end=body.length())
+  }
   if neg && body == "2147483648" {
-    // 唯一绝对值超 Int32 上限的合法负数：整个数字串恰为 2147483648。
-    // 必须在累加循环之前放行——循环内的溢出检查会先把它拒成 None，
-    // 旧实现对此的放行写在循环之后，实际永远到不了。
+    // 唯一绝对值超 Int32 上限的合法负数：归一后的数字串为 2147483648。
+    // 必须在累加循环之前放行——循环内的溢出检查会先把它拒成 None。
     return Some(-2147483648)
   }
   // Int32 上限 2147483647：累加前判断 acc 是否还会溢出，溢出返回 None
