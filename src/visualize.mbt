@@ -99,8 +99,8 @@ pub fn process_ids(history : History) -> Array[Int32] {
 }
 
 ///|
-/// 单个进程一行的横条布局结果
-struct RowLayout {
+/// 单个进程一行的横条布局结果（内部实现细节，故 `priv`）
+priv struct RowLayout {
   cells : Array[Char]
   width : Int32
 }

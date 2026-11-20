@@ -284,10 +284,6 @@ pub fn Rng::new(Int32) -> Self
 pub fn Rng::next(Self) -> Int32
 pub fn Rng::unit(Self) -> Double
 
-type RowLayout
-
-type SearchState
-
 #derive(@debug.Debug)
 pub(all) struct SetModel {
 }

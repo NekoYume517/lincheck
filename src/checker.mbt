@@ -104,7 +104,8 @@ pub fn CheckConfig::default() -> CheckConfig {
 // 模型实例作为普通参数传递。这样既享受编译期单态化，又不必为上下文发明泛型包装。
 
 ///|
-struct SearchState {
+/// 搜索状态（内部实现细节，不出现在任何公开签名里，故 `priv`）
+priv struct SearchState {
   /// 缓存：`状态编码|剩余位串` → true 表示该子问题已确定失败
   cache : Map[String, Bool]
   /// 访问的搜索节点数（每次 dfs 进入记 1）
