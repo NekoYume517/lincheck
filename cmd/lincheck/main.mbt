@@ -1097,22 +1097,53 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
   println(
     selfcheck_body(violations, unknowns, injected, injected_missed, total),
   )
-  // PASS 的判据必须**同时**覆盖两件事：合法历史不被误判，且每一档都真的做过
-  // 一次注入检出。旧判据只看 failed 与 injected_missed，于是「一条都没注入」
-  // 也算通过 —— 那正是「注入违规被发现：0 / 0 → PASS」的来源。
-  //
-  // `failed` 不再是一个独立累加器，判据直接读两个来源计数：
-  // `violations + unknowns == 0`（显示那一行由 selfcheck_body 派生）。
-  if violations == 0 &&
-    unknowns == 0 &&
-    injected_missed == 0 &&
-    injected == total {
+  let code = selfcheck_verdict(
+    violations, unknowns, injected_missed, injected, total,
+  )
+  if code == EXIT_OK {
     println("结果：PASS")
-    EXIT_OK
+  } else if code == EXIT_UNKNOWN {
+    println("结果：UNKNOWN")
   } else {
     println("结果：FAIL")
-    EXIT_VIOLATION
   }
+  code
+}
+
+///|
+/// `selfcheck` 的退出码决策表（纯函数，便于白盒断言）。
+///
+/// 三态口径与 `docs/exit-codes.md` 一致：
+/// - `0`：每个 seed 都跑出结论（合法历史全过 + 注入违规全检出 + 注入档真的
+///   跑过 `total` 次）；
+/// - `1`：**检查器真的错了** —— 把合法历史判成违规（`violations > 0`），
+///   或漏掉注入的违规（`injected_missed > 0`），或注入档没跑满
+///   （`injected != total`，由 LC-17 起的判据）；
+/// - `3`：有 seed **没跑出结论**（默认 5000 ms 预算耗尽）。
+///
+/// 旧判据把 `unknowns` 与 `violations` 一起折进 FAIL → `EXIT_VIOLATION`，
+/// 于是 CI 拿到同一个 `1` 时无法区分「检查器判错了」和「这台机器上没跑完」，
+/// 与 `docs/exit-codes.md`「3 不能被四舍五入到任何邻居」直接冲突
+/// （2026-11-21 审计 LC-25）。
+fn selfcheck_verdict(
+  violations : Int32,
+  unknowns : Int32,
+  injected_missed : Int32,
+  injected : Int32,
+  total : Int32,
+) -> Int32 {
+  // 确定性错误优先：误判/漏检是检查器的错，跟「跑没跑完」不是一件事。
+  if violations > 0 || injected_missed > 0 {
+    return EXIT_VIOLATION
+  }
+  // 「一条都没注入」不是通过：注入档必须真的跑过（LC-17）。
+  if injected != total {
+    return EXIT_VIOLATION
+  }
+  if unknowns > 0 {
+    return EXIT_UNKNOWN
+  }
+  EXIT_OK
 }
 
 // ── 入口 ──────────────────────────────────────────────────────────────

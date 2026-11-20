@@ -142,3 +142,19 @@ Measured on a 24000-operation history (search segment only, `register`):
 `--budget-ms 1` → 1 ms / 2 nodes, `--budget-ms 10` → 10 ms / 20 nodes,
 `--budget-ms 50` → 51 ms / 96 nodes.
 
+
+## `selfcheck`
+
+`selfcheck` is a meta-test, but it reports through the same table:
+
+| Code | Meaning |
+|---|---|
+| `0` | every seed produced a conclusion: legal histories accepted, injected violations caught, and every seed actually carried an injection |
+| `1` | the checker itself is wrong: a legal history was judged violating, an injected violation was missed, or the injection stage did not run for every seed |
+| `2` | usage error (unknown model, negative counts, `processes × ops` out of range) |
+| `3` | at least one seed's search exceeded its budget, so the self-check reached no conclusion |
+
+`3` matters here for the same reason it does everywhere else: a slow machine must
+not be reported as a broken checker. With the default 5000 ms per-seed budget a
+`3` means "no answer this time" (fewer `--ops`, or a quieter machine), while a
+`1` means "look at the checker".
