@@ -674,3 +674,61 @@ pub fn History::from_jsonl(
     None => Result::Ok({ operations: ops, })
   }
 }
+
+///|
+/// `(process, ops)` 对的升序比较（显式三分支，避开减法溢出）。
+fn compare_process_pair(
+  a : (Int32, Array[Operation]),
+  b : (Int32, Array[Operation]),
+) -> Int32 {
+  if a.0 < b.0 {
+    -1
+  } else if a.0 > b.0 {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+/// 一次遍历把操作按 `process` 装桶：返回（升序进程号，与进程号一一对应的桶）。
+///
+/// 桶内保持**原始出现顺序**，需要别的次序的调用方自己 `sort_by`（桶数组是新建
+/// 的，就地排序不会动到历史里的操作顺序）。
+///
+/// 为什么要有它：`visualize` / `process_ids` / `minimize_by_process` 都要「按
+/// 进程分组」，而旧写法是 `for p in procs { for op in ops { ... } }` ——
+/// 等价于 O(操作数 × 进程数)。`gen --processes 1000000 --ops 1` 是**合法**参数
+/// （总操作数 1e6），1e6 × 1e6 次比较把 visualize / minimize 拖到分钟级
+/// （2026-11-21 审计 LC-24）。装桶只需一次遍历，复杂度回到
+/// O(操作数 + 进程数·log 进程数)。
+fn group_by_process(
+  ops : Array[Operation],
+) -> (Array[Int32], Array[Array[Operation]]) {
+  let index_of : Map[Int32, Int32] = Map([])
+  let procs : Array[Int32] = []
+  let groups : Array[Array[Operation]] = []
+  for op in ops {
+    match index_of.get(op.process) {
+      Some(i) => groups[i].push(op)
+      None => {
+        index_of.set(op.process, procs.length())
+        procs.push(op.process)
+        groups.push([op])
+      }
+    }
+  }
+  // 升序：进程号排序后桶跟着换位，保证输出与旧实现（procs.sort()）逐字节相同。
+  let pairs : Array[(Int32, Array[Operation])] = []
+  for i in 0..<procs.length() {
+    pairs.push((procs[i], groups[i]))
+  }
+  pairs.sort_by(compare_process_pair)
+  let out_procs : Array[Int32] = []
+  let out_groups : Array[Array[Operation]] = []
+  for pair in pairs {
+    out_procs.push(pair.0)
+    out_groups.push(pair.1)
+  }
+  (out_procs, out_groups)
+}

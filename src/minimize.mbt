@@ -982,19 +982,12 @@ fn[M : Model] minimize_by_process_opt_with_config(
       let expl = Expl::new()
       let unknown : Array[String] = []
       // 第一步：收集出现过的进程号（升序，保证确定性）
-      let procs : Array[Int32] = []
-      for op in seed {
-        let mut seen = false
-        for p in procs {
-          if p == op.process {
-            seen = true
-          }
-        }
-        if !seen {
-          procs.push(op.process)
-        }
-      }
-      procs.sort()
+      //
+      // 旧写法是对每个见证操作线性扫一遍「已见进程号」，O(操作数 × 进程数)；
+      // 与 `visualize` / `process_ids` 同一处 O(n·P)（2026-11-21 审计 LC-24）。
+      // 下面「逐个进程整块砍掉」的循环必须保留逐次扫描：它砍的是**正在收缩**
+      // 的 `current`，而不是固定的种子，语义不同。
+      let (procs, _) = group_by_process(seed)
       // 第二步：逐个进程整块砍掉
       let mut current = seed.copy()
       for p in procs {

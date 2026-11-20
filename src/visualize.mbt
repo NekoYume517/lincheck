@@ -90,21 +90,12 @@ fn col_of(t : Int64, tmin : Int64, span : Int64, width : Int32) -> Int32 {
 
 ///|
 /// 收集历史里出现过的进程号（升序去重）
+///
+/// 走 `group_by_process` 的一次遍历实现：旧写法对每个操作线性扫一遍「已见过的
+/// 进程号」，是 O(操作数 × 进程数)（2026-11-21 审计 LC-24）。
 pub fn process_ids(history : History) -> Array[Int32] {
-  let out : Array[Int32] = []
-  for op in history.operations {
-    let mut seen = false
-    for p in out {
-      if p == op.process {
-        seen = true
-      }
-    }
-    if !seen {
-      out.push(op.process)
-    }
-  }
-  out.sort()
-  out
+  let (procs, _) = group_by_process(history.operations)
+  procs
 }
 
 ///|
@@ -190,30 +181,15 @@ fn render_ops(ops : Array[Operation], scale : Int32) -> String {
     }
   }
   let span = tmax - tmin
-  // 进程列表
-  let procs : Array[Int32] = []
-  for op in ops {
-    let mut seen = false
-    for p in procs {
-      if p == op.process {
-        seen = true
-      }
-    }
-    if !seen {
-      procs.push(op.process)
-    }
-  }
-  procs.sort()
+  // 进程列表 + 分桶：一次遍历，O(操作数 + 进程数·log 进程数)。
+  // 旧写法在这里是「每个操作线性扫一遍已见进程号」+「每个进程再扫一遍全部
+  // 操作」，等价 O(操作数 × 进程数)（2026-11-21 审计 LC-24）。
+  let (procs, groups) = group_by_process(ops)
   // 每个进程按 (start, id) 排序（compare_ops 用显式三分支，避免减法溢出）
   let rows : Array[RowLayout] = []
   let mut max_w = 1
-  for p in procs {
-    let mine : Array[Operation] = []
-    for op in ops {
-      if op.process == p {
-        mine.push(op)
-      }
-    }
+  for i in 0..<procs.length() {
+    let mine = groups[i]
     mine.sort_by(compare_ops)
     let layout = layout_row(mine, tmin, span, scale)
     if layout.width > max_w {
