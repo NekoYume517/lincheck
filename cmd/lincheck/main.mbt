@@ -58,6 +58,13 @@ struct Cli {
   ops_per_process : Int32
   seed : Int32
   concurrency : Double
+  /// `--concurrency` 的**十进制原文**（没写就是空串）。
+  ///
+  /// 域判据必须看原文，不能看 `concurrency`：`parse_double_arg` 把原文折成
+  /// Double 时会在 1.0 附近四舍五入，`1.000000000000000001` 与 `1.0` 折出来
+  /// 是同一个 Double（ulp(1.0) ≈ 2.2e-16），于是「原文严格大于 1」被放行
+  /// （2026-11-21 审计 LC-23）。`decimal_is_above_one` 用这个字段判上界。
+  concurrency_text : String
   mode : String
   json : Bool
   /// 命令行上**实际出现过**的参数名（按出现顺序，重复不去重）。
@@ -80,6 +87,7 @@ fn default_cli(cmd : String) -> Cli {
     ops_per_process: 4,
     seed: 1,
     concurrency: 0.5,
+    concurrency_text: "",
     mode: "consistent",
     json: false,
     used: [],
@@ -804,6 +812,66 @@ fn concurrency_in_domain(value : Double) -> Bool {
 }
 
 ///|
+/// 判 `--concurrency` 的**十进制原文**是否严格大于 1。
+///
+/// 域判据不能只看 Double：`parse_double_arg` 在 1.0 附近会四舍五入
+/// （`1 + 1e-18` 就是 `1.0`，ulp(1.0) ≈ 2.2e-16），于是原文越界的
+/// `1.000…001` 折成 `1.0` 后通过了 `concurrency_in_domain`
+/// （2026-11-21 审计 LC-23）。同族 LC-5 / LC-15 / LC-22 的口径是
+/// 「判据按十进制原文」，这里把上界那一半补上。
+///
+/// 只看正数：负数的域外判定由 `concurrency_in_domain` 的 `value >= 0.0`
+/// 负责（`-0` 折成 `-0.0`，`-0.0 >= 0.0` 为真，必须放行）。`NaN` /
+/// `Infinity` / 指数记法不在 `parse_double_arg` 的语法里，走不到这里。
+///
+/// 语法已由解析器保证是 `'-'? digits ('.' digits)?`，所以只需比较数量级，
+/// 不做任何浮点换算：
+/// 1. 跳过前导零后，整数段长度 > 1 → 大于 1；
+/// 2. 整数段恰为一个数字：> `'1'` → 大于 1；`'1'` → 看小数段；
+/// 3. 整数段全是 0（`0`、`-0`、`0.…`）→ 不大于 1；
+/// 4. 整数段为 `'1'` 且小数段含任何非零数字 → 大于 1（`1.0`、`1.000…`
+///    仍然放行）。
+fn decimal_is_above_one(text : String) -> Bool {
+  let n = text.length()
+  if n == 0 {
+    return false
+  }
+  if text[0] == '-' {
+    return false
+  }
+  // 整数段从第一个非前导零的数字开始。
+  let mut i = 0
+  while i < n && text[i] == '0' {
+    i = i + 1
+  }
+  let mut int_len = 0
+  let mut first_digit_above_one = false
+  let mut j = i
+  while j < n && text[j] != '.' {
+    if int_len == 0 && text[j] > '1' {
+      first_digit_above_one = true
+    }
+    int_len = int_len + 1
+    j = j + 1
+  }
+  if int_len > 1 || first_digit_above_one {
+    return true
+  }
+  if int_len == 0 {
+    return false
+  }
+  // 整数段恰为 "1"：小数段有非零数字就大于 1。
+  let mut k = j + 1
+  while k < n {
+    if text[k] != '0' {
+      return true
+    }
+    k = k + 1
+  }
+  false
+}
+
+///|
 fn cmd_gen(cli : Cli) -> Int32 {
   let model = match require_model(cli) {
     Some(m) => m
@@ -814,9 +882,17 @@ fn cmd_gen(cli : Cli) -> Int32 {
   if !count_args_non_negative(cli) {
     return EXIT_USAGE
   }
-  if !concurrency_in_domain(cli.concurrency) {
+  // 上界先按**十进制原文**判（LC-23），下界与「原文无法表达的越界」
+  // 仍交给 Double 判据：两条判据各管一半，缺一不可。
+  let domain_text = if cli.concurrency_text.length() == 0 {
+    cli.concurrency.to_string()
+  } else {
+    cli.concurrency_text
+  }
+  if decimal_is_above_one(cli.concurrency_text) ||
+    !concurrency_in_domain(cli.concurrency) {
     eprintln(
-      "用法错误: --concurrency \{cli.concurrency} 超出取值范围 [0, 1]（0 = 全串行，1 = 完全随机并发）",
+      "用法错误: --concurrency \{domain_text} 超出取值范围 [0, 1]（0 = 全串行，1 = 完全随机并发）",
     )
     return EXIT_USAGE
   }
@@ -1204,7 +1280,12 @@ fn parse_from(cli : Cli, argv : Array[String], i : Int32) -> Cli? {
       }
     } else if flag == "--concurrency" {
       match parse_double_arg(value) {
-        Some(v) => parse_from({ ..cli, concurrency: v, }, argv, i + 2)
+        Some(v) =>
+          parse_from(
+            { ..cli, concurrency: v, concurrency_text: value, },
+            argv,
+            i + 2,
+          )
         None => None
       }
     } else {
