@@ -245,8 +245,12 @@ pub fn[M : Model] minimal_witness(
 返回 `None`，`minimize` 原样返回整份历史并用
 `no_explainable_witness_text(total, min_witness)` 说明原因——不输出退化解，
 也不 panic。CLI 在 `--json` 下把它标记为
-`{"verdict":"non-linearizable","witness":[],"reason":"no-explainable-witness"}`，
-退出码仍为 `1`（历史确实违规是一个有效结论）。
+`{"verdict":"non-linearizable","witness":[],"reason":"no-explainable-witness","cause":C}`，
+退出码仍为 `1`（历史确实违规是一个有效结论）。`C` 是**成因分类 token**
+（`data-inconsistency` / `concurrency-race` / `unknown`），与文本出口的成因说明
+同源：两个出口读同一次复检结论 `no_witness_cause`（2026-11-21 审计 LC-26）。
+成因不写进 `reason`：`unknown` 落在违规形状的 reason 槽，会让只按 reason
+分支的脚本把已确认的违规读成「没有结论」。
 
 `minimize_raw` 是显式的不设防入口（`min_witness = 0`），允许压到单条操作，
 仅供对照与教学使用。
@@ -325,7 +329,7 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
 | `linearizable` | `check` / `minimize` | `{"verdict":"linearizable","total":N}` |
 | `unknown` | `check` / `minimize` | `{"verdict":"unknown","reason":S}` |
 | `non-linearizable` | `check` / `minimize` | `{"verdict":"non-linearizable","reason":R,"total":N,"witness":[W…],"depth":D}` |
-| `non-linearizable`（无合格见证） | `minimize` | `{"verdict":"non-linearizable","total":N,"witness":[],"reason":"no-explainable-witness"}` |
+| `non-linearizable`（无合格见证） | `minimize` | `{"verdict":"non-linearizable","total":N,"witness":[],"reason":"no-explainable-witness","cause":C}` |
 
 `W` = `{"id":…,"process":…,"op":"…","result":"…","start":…,"end":…}`（`op` / `result`
 是 `kind_label` / `result_label` 的文本，如 `"W=1"` / `"Cas(1->2)"` / `"Value(1)"`）。
@@ -341,6 +345,7 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
 | `witness[i].op` / `.result` | `kind_label` / `result_label` 的文本 | 有见证时 |
 | `depth` | **该见证**的最长一致前缀长度 | 只有**存在见证**的形状 |
 | `reason` | 结论的成因 | `unknown`（散文）与违规（分类 token） |
+| `cause` | NoWitness 的**成因分类**：`data-inconsistency` / `concurrency-race` / `unknown`（复检没下结论） | 只有 `minimize` 的 `no-explainable-witness` 形状 |
 
 三条不变量：
 

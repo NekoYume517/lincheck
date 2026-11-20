@@ -454,10 +454,40 @@ fn unknown_json(reason : String) -> String {
 /// 补一个 `depth: 0` 会把「没有见证」写成「有见证且前缀为空」—— 后者正是
 /// `violation_reason` 里 data-inconsistency 的判据，两种结论不是一回事。
 /// 语义写在 `API.md` §7.1，缺席本身由 `json_shape_wbtest.mbt` 锁住。
-fn no_witness_json(total : Int32) -> String {
+///
+/// `reason` 保持形状 token（`no-explainable-witness`），成因单独放在 `cause`：
+/// 文本出口的成因是靠**再查一次**历史定的（`no_witness_cause`），而那条检查
+/// 可能没有结论。旧实现只让文本走这次复检、JSON 直接写死形状 token，于是
+/// 「同一条命令、同一份历史、同一个预算」在文本与 JSON 两个出口上对成因
+/// 各说一套（2026-11-21 审计 LC-26）。现在两个出口读**同一个** `cause`。
+///
+/// 为什么不把成因塞进 `reason`：`cause` 的取值里有 `unknown`，把它写进
+/// `verdict":"non-linearizable"` 的 `reason` 槽，会让「只按 reason 分支」的
+/// 脚本把一次**已确认的违规**读成「没有结论」—— 正是 `docs/exit-codes.md`
+/// 反复点名的那种混淆。形状 token 与成因 token 各占一个键。
+fn no_witness_json(total : Int32, cause : String) -> String {
   "{\"verdict\":\"non-linearizable\",\"total\":" +
   total.to_string() +
-  ",\"witness\":[],\"reason\":\"no-explainable-witness\"}"
+  ",\"witness\":[],\"reason\":\"no-explainable-witness\",\"cause\":\"" +
+  cause +
+  "\"}"
+}
+
+///|
+/// NoWitness 的**成因** token（三态，LC-8）：JSON 的 `cause` 与文本的说明
+/// **共用这一份**判据。
+///
+/// - `Violation(v)` → `violation_reason(v)`：`data-inconsistency` /
+///   `concurrency-race`；
+/// - 其余（`Unknown`，以及理论上不可能的 `Linearizable`）→ `unknown`。
+///
+/// 绝不能兜底成 `concurrency-race`：那会把一次没跑完的复检编造成
+/// 「这是并发竞态」，正是三态哲学要避免的事。
+pub fn no_witness_cause(outcome : @lib.CheckOutcome) -> String {
+  match outcome {
+    @lib.Violation(v) => @lib.violation_reason(v)
+    _ => "unknown"
+  }
 }
 
 ///|
@@ -559,11 +589,11 @@ pub fn no_witness_reason_text(
   original_n : Int32,
   outcome : @lib.CheckOutcome,
 ) -> String {
-  let reason = match outcome {
-    @lib.Violation(v) => @lib.violation_reason(v)
-    _ => "unknown"
-  }
-  @lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, reason)
+  @lib.no_explainable_witness_text_for(
+    original_n,
+    @lib.MIN_WITNESS,
+    no_witness_cause(outcome),
+  )
 }
 
 ///|
@@ -619,8 +649,13 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
       EXIT_UNKNOWN
     }
     @lib.NoWitness => {
+      // 成因只复检**一次**，文本与 JSON 共用同一份结论（LC-26）。
+      // 旧实现让文本走一次复检，JSON 却直接把成因写死成形状 token ——
+      // 同一条命令的两个出口各写一套，预算在两次搜索之间被耗掉时
+      // （或机器负载变化时）文本说「成因未能确定」、JSON 说「已定」。
+      let cause = no_witness_cause(@lib.check(history, model, cfg))
       if cli.json {
-        println(no_witness_json(original_n))
+        println(no_witness_json(original_n, cause))
       } else {
         println("✗ NON-LINEARIZABLE")
         println("")
@@ -637,7 +672,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
         // 也不能断言自相矛盾。旧实现写成 `_ => "concurrency-race"`，
         // 把一个「不知道」编造成了具体成因。
         println(
-          "  \{no_witness_reason_text(original_n, @lib.check(history, model, cfg))}",
+          "  \{@lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, cause)}",
         )
       }
       EXIT_VIOLATION

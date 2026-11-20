@@ -8,6 +8,8 @@ import {
 // Values
 pub fn jsonl_error_text(String, Error) -> String
 
+pub fn no_witness_cause(@src.CheckOutcome) -> String
+
 pub fn no_witness_reason_text(Int32, @src.CheckOutcome) -> String
 
 pub fn parse_double_arg(String) -> Double?

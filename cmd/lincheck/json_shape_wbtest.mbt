@@ -141,10 +141,10 @@ test "LC-18: unknown 形状只有 verdict+reason（reason 是散文，不是分�
 ///|
 /// NoWitness 形状：`witness` 必须是空数组，**且整个对象不出现 `depth`**。
 test "LC-18: NoWitness 形状不含 depth（无见证就没有前缀长度）" {
-  let out = no_witness_json(1)
+  let out = no_witness_json(1, "concurrency-race")
   inspect(
     out,
-    content="{\"verdict\":\"non-linearizable\",\"total\":1,\"witness\":[],\"reason\":\"no-explainable-witness\"}",
+    content="{\"verdict\":\"non-linearizable\",\"total\":1,\"witness\":[],\"reason\":\"no-explainable-witness\",\"cause\":\"concurrency-race\"}",
   )
   // 有人「顺手补上」depth 时这里必须红：那会把「无见证」写成「有见证且前缀为空」
   assert_false(out.contains("\"depth\""))
@@ -155,4 +155,86 @@ test "LC-18: NoWitness 形状不含 depth（无见证就没有前缀长度）" {
   assert_true(
     json_violation(v, history, "non-linearizable").contains("\"depth\""),
   )
+}
+
+// ============================================================================
+// LC-26：NoWitness 的成因在文本与 JSON 两个出口上必须是**同一份**结论
+// ============================================================================
+//
+// 旧实现：文本走 `no_witness_reason_text(n, check(history, cfg))`（真的再查
+// 一次），JSON 走 `no_witness_json(n)` 并写死 `reason:"no-explainable-witness"`。
+// 两个出口各写一套判据：低预算抖动时文本说「成因未能确定」、JSON 却没有任何
+// 位置表达这件事；而且 JSON 路径省掉了这次复检，同一条命令的两种输出格式
+// 工作量都不一样。
+//
+// 现在两个出口读同一个 `cause`（`no_witness_cause`）：`reason` 仍是形状 token
+// （API.md §7.1），成因落在 `cause` 键上。为什么成因不塞进 `reason`：它的取值
+// 里有 `unknown`，写进 `verdict":"non-linearizable"` 的 reason 槽会让「只按
+// reason 分支」的脚本把已确认的违规读成「没有结论」。
+
+///|
+/// NoWitness 的三种成因：键集合完全相同，只有 `cause` 的值不同。
+test "LC-26: NoWitness 的 cause 三态共用同一张键表（形状 token 不变）" {
+  for cause in ["data-inconsistency", "concurrency-race", "unknown"] {
+    let out = no_witness_json(3, cause)
+    assert_true(out.contains("\"reason\":\"no-explainable-witness\""))
+    assert_true(out.contains("\"cause\":\"" + cause + "\""))
+    assert_true(out.contains("\"witness\":[]"))
+    assert_false(out.contains("\"depth\""))
+  }
+}
+
+///|
+/// 文本与 JSON 的成因必须逐条对应：同一个 cause 进两个渲染器，读出来的
+/// 方向说明是同一支。
+test "LC-26: 文本与 JSON 的成因逐条对应（同一份 cause）" {
+  let n = 3
+  // data-inconsistency：两个出口都指向「历史数据自相矛盾」
+  let di = no_witness_json(n, "data-inconsistency")
+  let di_text = @lib.no_explainable_witness_text_for(
+    n,
+    @lib.MIN_WITNESS,
+    no_witness_cause(
+      @lib.Violation({
+        ops: [js_op(0, 0, @lib.Cas(1, 2), @lib.Bool(true), 2L, 5L)],
+        depth: 0,
+        explanation: "",
+      }),
+    ),
+  )
+  assert_true(di.contains("data-inconsistency"))
+  assert_true(di_text.contains("历史数据自相矛盾"))
+  // concurrency-race：两个出口都指向「并发竞态」
+  let cr = no_witness_json(n, "concurrency-race")
+  assert_true(cr.contains("concurrency-race"))
+  assert_true(
+    @lib.no_explainable_witness_text_for(
+      n,
+      @lib.MIN_WITNESS,
+      "concurrency-race",
+    ).contains("属于并发竞态"),
+  )
+  // unknown：JSON 的 cause 与文本的「成因未能确定」同源
+  let unk = no_witness_json(n, no_witness_cause(@lib.Unknown("预算耗尽")))
+  assert_true(unk.contains("\"cause\":\"unknown\""))
+  assert_true(
+    @lib.no_explainable_witness_text_for(
+      n,
+      @lib.MIN_WITNESS,
+      no_witness_cause(@lib.Unknown("预算耗尽")),
+    ).contains("成因未能确定"),
+  )
+}
+
+///|
+/// `no_witness_cause` 的三态：违规按 `violation_reason` 分类，其余一律
+/// `unknown` —— 绝不兜底成 `concurrency-race`。
+test "LC-26: no_witness_cause 不把 Unknown 编造成竞态" {
+  let two = js_op(0, 0, @lib.Write(1), @lib.Ok, 0L, 5L)
+  let racing = @lib.Violation::{ ops: [two], depth: 1, explanation: "", }
+  assert_eq(no_witness_cause(@lib.Violation(racing)), "concurrency-race")
+  let single = @lib.Violation::{ ops: [two], depth: 0, explanation: "", }
+  assert_eq(no_witness_cause(@lib.Violation(single)), "data-inconsistency")
+  assert_eq(no_witness_cause(@lib.Unknown("预算耗尽")), "unknown")
+  assert_eq(no_witness_cause(@lib.Linearizable), "unknown")
 }
