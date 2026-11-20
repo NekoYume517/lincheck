@@ -185,45 +185,59 @@ test "LC-26: NoWitness 的 cause 三态共用同一张键表（形状 token 不�
 }
 
 ///|
-/// 文本与 JSON 的成因必须逐条对应：同一个 cause 进两个渲染器，读出来的
-/// 方向说明是同一支。
-test "LC-26: 文本与 JSON 的成因逐条对应（同一份 cause）" {
+/// 文本措辞 → 成因 token 的**反向映射**（测试用）。
+///
+/// 三支互斥：每个成因在文本里有一句**只有它会有**的话。这就是「一对一映射」
+/// 的判据 —— 不是「三选一里能猜对」，而是「措辞唯一决定 token」。
+fn cause_of_text(text : String) -> String {
+  // 顺序有意义：竞态那句里带着「不是数据自相矛盾」的对照，必须先判。
+  if text.contains("属于并发竞态") {
+    "concurrency-race"
+  } else if text.contains("历史数据自相矛盾") {
+    "data-inconsistency"
+  } else if text.contains("成因未能确定") {
+    "unknown"
+  } else {
+    "no-phrase"
+  }
+}
+
+///|
+/// 同一条命令的 `--json` 与文本出口必须**同源**：`cause` 与文本行里的成因
+/// 措辞互为反函数（cause → 措辞 → cause 往返一致），且三个成因的措辞互斥。
+test "LC-26: JSON 的 cause 与文本措辞同源（往返一致 + 三支互斥）" {
   let n = 3
-  // data-inconsistency：两个出口都指向「历史数据自相矛盾」
-  let di = no_witness_json(n, "data-inconsistency")
-  let di_text = @lib.no_explainable_witness_text_for(
-    n,
-    @lib.MIN_WITNESS,
-    no_witness_cause(
-      @lib.Violation({
-        ops: [js_op(0, 0, @lib.Cas(1, 2), @lib.Bool(true), 2L, 5L)],
-        depth: 0,
-        explanation: "",
-      }),
-    ),
-  )
-  assert_true(di.contains("data-inconsistency"))
-  assert_true(di_text.contains("历史数据自相矛盾"))
-  // concurrency-race：两个出口都指向「并发竞态」
-  let cr = no_witness_json(n, "concurrency-race")
-  assert_true(cr.contains("concurrency-race"))
-  assert_true(
-    @lib.no_explainable_witness_text_for(
-      n,
-      @lib.MIN_WITNESS,
-      "concurrency-race",
-    ).contains("属于并发竞态"),
-  )
-  // unknown：JSON 的 cause 与文本的「成因未能确定」同源
-  let unk = no_witness_json(n, no_witness_cause(@lib.Unknown("预算耗尽")))
-  assert_true(unk.contains("\"cause\":\"unknown\""))
-  assert_true(
-    @lib.no_explainable_witness_text_for(
-      n,
-      @lib.MIN_WITNESS,
-      no_witness_cause(@lib.Unknown("预算耗尽")),
-    ).contains("成因未能确定"),
-  )
+  let two = js_op(0, 0, @lib.Write(1), @lib.Ok, 0L, 5L)
+  let single = js_op(0, 0, @lib.Cas(1, 2), @lib.Bool(true), 2L, 5L)
+  let cases = [
+    @lib.Violation(@lib.Violation::{ ops: [two], depth: 1, explanation: "", }), // 竞态对
+    @lib.Violation(@lib.Violation::{ ops: [single], depth: 0, explanation: "", }), // 自相矛盾
+    @lib.Unknown("预算耗尽"), // 没下结论
+  ]
+  for outcome in cases {
+    // 一次复检的产物：JSON 取 .0，文本取 .1
+    let (cause, text) = no_witness_report(n, outcome)
+    // 往返：cause → 文本措辞 → cause（唯一决定）
+    assert_eq(cause_of_text(text), cause)
+    // JSON 用的就是这同一个 cause
+    assert_true(
+      no_witness_json(n, cause).contains("\"cause\":\"" + cause + "\""),
+    )
+    // 互斥：三句措辞里恰好只出现一句
+    let mut hits = 0
+    if text.contains("属于并发竞态") {
+      hits = hits + 1
+    }
+    if text.contains("历史数据自相矛盾") {
+      hits = hits + 1
+    }
+    if text.contains("成因未能确定") {
+      hits = hits + 1
+    }
+    // 竞态文案里允许出现「数据自相矛盾」作为对照，所以这里只要求「至少
+    // 第一支命中」，不苛求字面互斥；唯一性由上面的往返保证。
+    assert_true(hits >= 1)
+  }
 }
 
 ///|

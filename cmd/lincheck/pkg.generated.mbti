@@ -12,6 +12,8 @@ pub fn no_witness_cause(@src.CheckOutcome) -> String
 
 pub fn no_witness_reason_text(Int32, @src.CheckOutcome) -> String
 
+pub fn no_witness_report(Int32, @src.CheckOutcome) -> (String, String)
+
 pub fn parse_double_arg(String) -> Double?
 
 pub fn parse_int_arg(String) -> Int32?

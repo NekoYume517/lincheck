@@ -491,6 +491,23 @@ pub fn no_witness_cause(outcome : @lib.CheckOutcome) -> String {
 }
 
 ///|
+/// NoWitness 的一次复检产物：`(成因 token, 文本说明)`。
+///
+/// 两个出口从**同一个返回值**取料（JSON 取 `.0`，文本取 `.1`），而不是各自调
+/// 一遍 `no_witness_cause` / `no_explainable_witness_text_for` —— 这样「文本说
+/// 竞态、JSON 说 unknown」在结构上不可能发生（2026-11-21 审计 LC-26）。
+pub fn no_witness_report(
+  original_n : Int32,
+  outcome : @lib.CheckOutcome,
+) -> (String, String) {
+  let cause = no_witness_cause(outcome)
+  (
+    cause,
+    @lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, cause),
+  )
+}
+
+///|
 /// 解析 `--model`，未知名字返回可读的错误消息。
 ///
 /// 不静默回退到默认模型：拼错一个字母就静默换模型，会给出一个看起来
@@ -649,11 +666,14 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
       EXIT_UNKNOWN
     }
     @lib.NoWitness => {
-      // 成因只复检**一次**，文本与 JSON 共用同一份结论（LC-26）。
-      // 旧实现让文本走一次复检，JSON 却直接把成因写死成形状 token ——
-      // 同一条命令的两个出口各写一套，预算在两次搜索之间被耗掉时
+      // 成因只复检**一次**，文本与 JSON 从同一个 `no_witness_report` 取料
+      // （LC-26）。旧实现让文本走一次复检，JSON 却直接把成因写死成形状
+      // token —— 同一条命令的两个出口各写一套，预算在两次搜索之间被耗掉时
       // （或机器负载变化时）文本说「成因未能确定」、JSON 说「已定」。
-      let cause = no_witness_cause(@lib.check(history, model, cfg))
+      let (cause, text) = no_witness_report(
+        original_n,
+        @lib.check(history, model, cfg),
+      )
       if cli.json {
         println(no_witness_json(original_n, cause))
       } else {
@@ -671,9 +691,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
         // （预算在两次搜索之间被耗掉 / 机器负载变化），此时既不能断言竞态、
         // 也不能断言自相矛盾。旧实现写成 `_ => "concurrency-race"`，
         // 把一个「不知道」编造成了具体成因。
-        println(
-          "  \{@lib.no_explainable_witness_text_for(original_n, @lib.MIN_WITNESS, cause)}",
-        )
+        println("  \{text}")
       }
       EXIT_VIOLATION
     }
@@ -1278,6 +1296,46 @@ fn validate_flags(cmd : String, cli : Cli) -> Bool {
 }
 
 ///|
+/// 值位的**统一分类**：`true` = 这个位置写的是选项/缺值，不是值。
+///
+/// 上一轮（LC-20）只把 `--history` 的短选项分类修好，其余五个带值参数还是
+/// 「照单全收」，于是同一条命令对不同参数的错误信息各不相同：
+///
+/// ```text
+/// check --history -h   → 参数错误（缺值或数值非法）      ← 对
+/// check --model -h     → 未知模型 -h（可选 register, …）  ← 把选项当模型名
+/// gen --seed -h        → 参数错误（缺值或数值非法）      ← 结果对、路径不同
+/// ```
+///
+/// 判据只有一条：**`-` 开头的串能不能被该值位的语法接受**。能接受就是值
+/// （`--seed -5`、`--budget-ms -0`、`--concurrency -0.5`、`--ops -2147483648`
+/// 都是合法值），不能接受就是选项或拼错的数（各走各的错误信息）。
+///
+/// 分项：
+/// - `--history`（路径）与 `--model`（枚举名）：`-` 开头一律按选项处理 ——
+///   以 `-` 开头的真实路径可写成 `./-name`，模型名不可能以 `-` 开头；
+/// - 整数位：`parse_int_arg` 能接受就是值（含 `-0`、Int32 最小值）；
+/// - `--concurrency`：`parse_double_arg` 能接受就是值（含 `-0.5`、`-0`）。
+///
+/// 长选项（`--x`）在所有值位都是缺值 —— 上面的数值语法本来也接受不了
+/// `--5`，这里显式先判一次，读代码时不必反推。
+fn value_is_option(flag : String, value : String) -> Bool {
+  if value.has_prefix("--") {
+    return true
+  }
+  if !value.has_prefix("-") {
+    return false
+  }
+  if flag == "--history" || flag == "--model" {
+    return true
+  }
+  if flag == "--concurrency" {
+    return parse_double_arg(value).is_empty()
+  }
+  parse_int_arg(value).is_empty()
+}
+
+///|
 /// 解析命令行：逐项消费 argv，遇到无法识别的形态返回 None。
 ///
 /// 用递归传递不可变 Cli 值（MoonBit 记录字段默认不可变，需要 mut 才能原地改）。
@@ -1306,12 +1364,12 @@ fn parse_from(cli : Cli, argv : Array[String], i : Int32) -> Cli? {
     parse_from({ ..cli, mode: "random", }, argv, i + 1)
   } else if flag == "--inject" {
     parse_from({ ..cli, mode: "inject", }, argv, i + 1)
-  } else if i + 1 >= argv.length() ||
-    argv[i + 1].has_prefix("--") ||
-    (flag == "--history" && argv[i + 1].has_prefix("-")) {
-    // 长选项出现在任何带值参数的位置都算缺值；路径还可能吞掉短选项，
-    // 所以 --history 对单个 '-' 前缀也按选项处理，而不是误报数据错误。
-    // 数值参数的负数不受影响；以 '-' 开头的真实路径可写成 './-name'。
+  } else if i + 1 >= argv.length() || value_is_option(flag, argv[i + 1]) {
+    // 值位的统一分类（LC-27）：长选项、以及其他参数位不接受的短选项形态
+    // 都按缺值处理。`--history` 对单个 '-' 前缀同样按选项处理，因为它
+    // 接受的是路径（以 '-' 开头的真实路径可写成 './-name'）；数值位则
+    // 只在 parse_int_arg / parse_double_arg 真的接受时才放行，所以
+    // `--seed -5`、`--budget-ms -0`、`--concurrency -0.5` 不受影响。
     None
   } else {
     let value = argv[i + 1]
