@@ -1459,8 +1459,17 @@ fn parse_args(cmd : String, argv : Array[String]) -> Cli? {
 /// 主包的 `*_test.mbt` 只能看到 pub 符号。退出码是 `docs/exit-codes.md` 的核心
 /// 契约（`1` = 有效结论 / `3` = 没有结论），只有直接断言它才能锁住
 /// 「预算耗尽不得被渲染成已判定违规」这类缺陷。
+///
+/// ## LC-29（2026-11-23）：诊断一律走 stderr，不污染 stdout
+///
+/// `1` / `3` 是结论，`0` 是结论；`2` / `4` 是「命令没跑成」。stdout 在成功
+/// 路径上承载**数据**（gen 的 JSONL、check 的 JSON/文本结论），把用法文本 /
+/// 数据错误打进 stdout 会让 `gen ... > history.jsonl` 的数据文件被 623B
+/// 用法文本污染（实测，见 evidence/B1-red-channel.log 的通道普查）。
+/// 与 validate_flags / 模型解析 / 负计数 / 域判据等既有 eprintln 出口同口径。
 pub fn run(argv : Array[String]) -> Int32 {
   if argv.length() < 2 {
+    eprintln("")
     usage()
     return EXIT_USAGE
   }
@@ -1477,15 +1486,15 @@ pub fn run(argv : Array[String]) -> Int32 {
     }
   }
   if !valid {
-    println("未知子命令：\{cmd}")
-    println("")
+    eprintln("未知子命令：\{cmd}")
+    eprintln("")
     usage()
     return EXIT_USAGE
   }
   match parse_args(cmd, argv) {
     None => {
-      println("参数错误（缺值或数值非法）")
-      println("")
+      eprintln("参数错误（缺值或数值非法）")
+      eprintln("")
       usage()
       EXIT_USAGE
     }
@@ -1505,15 +1514,15 @@ pub fn run(argv : Array[String]) -> Int32 {
         }
       } catch {
         Failure(msg) => {
-          println("用法错误：\{msg}")
+          eprintln("用法错误：\{msg}")
           EXIT_USAGE
         }
         DataFailure(msg) => {
-          println("数据错误：\{msg}")
+          eprintln("数据错误：\{msg}")
           EXIT_DATA
         }
         _ => {
-          println("内部错误")
+          eprintln("内部错误")
           EXIT_UNKNOWN
         }
       }
