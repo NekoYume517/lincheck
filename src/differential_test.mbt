@@ -129,6 +129,62 @@ test "differential: check vs brute force (random histories, all models)" {
 }
 
 ///|
+/// A1 探针的 600-seed 扫描转正（2026-11-23）：6 倍种子扩容。
+///
+/// 前任 scratch（evidence/A1-diff-scratch.log）跑 seeds 1..600 发现了
+/// 「check=true brute=false」的 set Read 分歧 —— 那是基准错（A1 已修，
+/// 基准现走 accepts）。这份扩容扫描的价值：generate_random 的随机结果
+/// 值覆盖合法与非法两种历史，600 seed × 4 模型在 (2 进程 × 3 操作) 规模
+/// 上对齐 check 与暴力枚举，比上面的 120-seed 主测试覆盖面大得多。
+/// 实测分布（本轮，供下轮对照）：register 376/600、counter 181/600、
+/// set 328/600、queue 56/600 判线性一致，mismatches=0。
+test "differential: sweep seeds 1..600 all models (brute uses accepts)" {
+  let models = [
+    (AnyModel::Register(register_model()), "register"),
+    (AnyModel::Counter(counter_model()), "counter"),
+    (AnyModel::Set(set_model()), "set"),
+    (AnyModel::Queue(queue_model()), "queue"),
+  ]
+  for (m, name) in models {
+    let mut mismatches = 0
+    for seed in 1..<=600 {
+      let cfg = GenConfig::{
+        processes: 2,
+        ops_per_process: 3,
+        seed,
+        concurrency: (seed % 11).to_double() / 10.0,
+      }
+      let h = generate_random(m, cfg)
+      let check_cfg = CheckConfig::{
+        time_budget_ms: 60000,
+        max_states: 200000,
+        allow_unknown_results: false,
+      }
+      let verdict = match check(h, m, check_cfg) {
+        Linearizable => true
+        Violation(_) => false
+        Unknown(_) => {
+          // 60s 预算 + 6 个操作不可能超时；出现即失败
+          assert_true(false, msg="UNKNOWN \{name} seed=\{seed}")
+          false
+        }
+      }
+      let brute = brute_force_linearizable(h.operations, m)
+      if verdict != brute {
+        mismatches = mismatches + 1
+        if mismatches <= 3 {
+          println(
+            "MISMATCH \{name} seed=\{seed} check=\{verdict} brute=\{brute}",
+          )
+          println(h.to_jsonl())
+        }
+      }
+    }
+    assert_eq(mismatches, 0, msg="\{name} 存在 check/暴力分歧")
+  }
+}
+
+///|
 /// 合法历史（generate_consistent）必须判 Linearizable——扩 seeds 覆盖。
 test "differential: consistent histories stay linearizable" {
   let models = [
