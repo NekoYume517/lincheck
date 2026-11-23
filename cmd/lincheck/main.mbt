@@ -995,7 +995,18 @@ fn cmd_gen(cli : Cli) -> Int32 {
       )
     _ => @lib.generate_consistent(model, cfg)
   }
-  println(history.to_jsonl())
+  // LC-28（2026-11-23）：println(history.to_jsonl()) 会把整段历史拼成单个
+  // 巨型 String —— 实测 register 8,650,000 条（输出 ≈ 1.08 GB，在
+  // MAX_GENERATED_OPS 的合法域内）起 native 崩溃（0xC0000005，退出码
+  // 掉出 0..4）。改走分块输出：to_jsonl_chunks 的块是整行块（块尾不带
+  // 换行），逐块 println 的拼接恰为 to_jsonl()；旧版 println 在串尾多打的
+  // 那一个换行由最后的 println("") 补上（**无条件**——bin-before.exe
+  // 逐字节取证：非空历史输出比 to_jsonl 多一个行尾，空历史恰好一行）。
+  // 输出与旧版逐字节等价，而任何一块都不随历史规模增长。
+  for chunk in @lib.History::to_jsonl_chunks(history, 10_000) {
+    println(chunk)
+  }
+  println("")
   EXIT_OK
 }
 
@@ -1129,7 +1140,24 @@ fn cmd_selfcheck(cli : Cli) -> Int32 {
     }
     // 顺手做注入测试：制造违规，检查器必须发现
     let bad = @lib.inject_violation(h, model, seed)
-    if bad.to_jsonl() != h.to_jsonl() {
+    // LC-28：逐操作比较而不是 to_jsonl 整串比较 —— 大规模 selfcheck 下
+    // 两份巨型单串本身就可能触发巨型字符串分配的崩溃路径。
+    let mut injected_changed = h.length() != bad.length()
+    if !injected_changed {
+      for i, op in h.operations {
+        let other = bad.operations[i]
+        if op.id != other.id ||
+          op.process != other.process ||
+          op.kind != other.kind ||
+          op.result != other.result ||
+          op.start != other.start ||
+          op.end != other.end {
+          injected_changed = true
+          break
+        }
+      }
+    }
+    if injected_changed {
       injected = injected + 1
       match @lib.check(bad, model, @lib.CheckConfig::default()) {
         @lib.Violation(_) => ()

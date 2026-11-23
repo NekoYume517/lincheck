@@ -255,6 +255,16 @@ fn result_to_json(result : OpResult) -> String {
 
 ///|
 /// 整段历史 → JSONL 文本（每行一个操作，末尾带换行）。
+///
+/// ## LC-28（2026-11-23）：不要对大历史用它
+///
+/// 实测（release，register，`gen --processes 1000 --ops N`）：
+/// N = 8,630,000 时 `println(history.to_jsonl())` 输出 1,082,227,184 字节
+/// 尚可成功，N = 8,650,000 起原生崩溃（exit `-1073741819`，0xC0000005）。
+/// `MAX_GENERATED_OPS = 10_000_000` 的合法域内就有这一档 —— 单个巨型
+/// String 在 native 上触发访问冲突，退出码掉出 0..4 契约。CLI 输出路径
+/// 必须改走 [`History::to_jsonl_chunks`]；本函数保留给**中小历史**的
+/// 既有调用方（往返测试、注入比较等），签名与语义不变。
 pub fn History::to_jsonl(self : History) -> String {
   let sb = StringBuilder()
   for op in self.operations {
@@ -262,6 +272,46 @@ pub fn History::to_jsonl(self : History) -> String {
     sb.write_string("\n")
   }
   sb.to_string()
+}
+
+///|
+/// 整段历史 → **分块** JSONL 文本（LC-28，2026-11-23）。
+///
+/// 实测契约（对齐旧版 `println(to_jsonl())`，bin-before.exe 逐字节取证）：
+/// 旧输出 = N 行 JSON（各行以 `\n` 结尾）+ 末尾一个 `println` 补的换行。
+/// 因此本函数返回**整行块**：每块是至多 `ops_per_chunk` 行、行与行之间用
+/// `\n` 连接、**块尾不带换行**（空历史返回空数组）。CLI 侧对每块
+/// `println`（自动补行尾），全部拼接恰为 `to_jsonl()`；旧版 `println`
+/// 在末尾多打的那一个换行由调用方补一次 `println("")` —— 输出与旧版
+/// **逐字节等价**。
+///
+/// 每块长度 ≈ `ops_per_chunk × 单行`，不随历史总规模增长 ——
+/// 865 万条（≈ 1.08 GB）起崩溃的巨型单串在这条路径上不再被构造。
+/// `ops_per_chunk <= 0` 钳制为 1。
+pub fn History::to_jsonl_chunks(
+  self : History,
+  ops_per_chunk : Int32,
+) -> Array[String] {
+  let per = if ops_per_chunk < 1 { 1 } else { ops_per_chunk }
+  let chunks : Array[String] = []
+  let sb = StringBuilder()
+  let mut in_chunk = 0
+  for op in self.operations {
+    if in_chunk > 0 {
+      sb.write_string("\n")
+    }
+    sb.write_string(operation_to_json(op))
+    in_chunk = in_chunk + 1
+    if in_chunk == per {
+      chunks.push(sb.to_string())
+      sb.reset()
+      in_chunk = 0
+    }
+  }
+  if in_chunk > 0 {
+    chunks.push(sb.to_string())
+  }
+  chunks
 }
 
 // ============================================================

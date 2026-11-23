@@ -216,6 +216,7 @@ pub fn History::length(Self) -> Int32
 pub fn History::new() -> Self
 pub fn History::sort_by_start(Self) -> Self
 pub fn History::to_jsonl(Self) -> String
+pub fn History::to_jsonl_chunks(Self, Int32) -> Array[String]
 
 pub(all) enum MinimizeOutcome {
   Consistent
