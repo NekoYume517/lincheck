@@ -99,10 +99,9 @@ fn differential_once(model : AnyModel, seed : Int32) -> Bool {
   let verdict = match check(h, model, check_cfg) {
     Linearizable => true
     Violation(_) => false
-    Unknown(_) => {
+    Unknown(_) =>
       // 60s 预算下 7 个操作不可能超时；出现即失败
       false
-    }
   }
   let brute = brute_force_linearizable(h.operations, model)
   if verdict != brute {
@@ -168,5 +167,3 @@ test "differential: consistent histories stay linearizable" {
     }
   }
 }
-
-
