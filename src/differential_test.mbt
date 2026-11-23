@@ -25,14 +25,14 @@ fn brute_force_linearizable(ops : Array[Operation], model : AnyModel) -> Bool {
       for op in order {
         match model.apply(state, op.kind) {
           Some((next, expected)) => {
-            // 严格匹配：暴力基准不允许宽松语义
-            let ok = match (expected, op.result) {
-              (OpResult::Ok, OpResult::Ok) => true
-              (Value(a), Value(b)) => a == b
-              (Bool(a), Bool(b)) => a == b
-              (Empty, Empty) => true
-              _ => false
-            }
+            // 结果判据必须走 Model::accepts（A1，2026-11-23）：
+            // API.md §2 规定 set 模型 Read 可返回任一当前成员，
+            // `apply` 给出的最小成员只是生成器用的合法代表结果。
+            // 旧实现在这里做严格相等，把 set 偷换成「Read 恒返回
+            // 最小成员」的另一个对象，与 check 的结论系统性背离。
+            // 严格相等是默认 accepts 的语义；有自定义 accepts 的模型
+            // （set）必须走同一钩子，两个判定器才算在测同一个契约。
+            let ok = model.accepts(state, op.kind, expected, op.result)
             if !ok {
               return false
             }
@@ -166,4 +166,63 @@ test "differential: consistent histories stay linearizable" {
       }
     }
   }
+}
+
+///|
+/// A1（2026-11-23）：暴力基准的结果判据必须走 `Model::accepts`。
+///
+/// API.md §2：set 模型 Read「可返回任一当前成员 Value(v)」，`apply` 给出的
+/// 最小成员只是生成器用的合法代表结果，`accepts` 才是结果校验的权威钩子。
+/// 旧基准用「与 apply 代表值严格相等」判结果，等于把 set 偷换成
+/// 「Read 恒返回最小成员」的另一个对象 —— Append(1)、Append(2) 并发写后
+/// 读到非最小的 2 会被误判违规，而 check 正确判线性一致
+/// （探针 evidence/A1-diff-scratch.log：check=true brute=false）。
+test "differential-a1: brute force must validate results via accepts" {
+  let m = AnyModel::Set(set_model())
+  let ops = [
+    Operation::{
+      id: 0,
+      process: 0,
+      kind: Append(1),
+      result: Ok,
+      start: 0L,
+      end: 10L,
+    },
+    Operation::{
+      id: 1,
+      process: 1,
+      kind: Append(2),
+      result: Ok,
+      start: 0L,
+      end: 10L,
+    },
+    Operation::{
+      id: 2,
+      process: 0,
+      kind: Read,
+      result: Value(2),
+      start: 20L,
+      end: 30L,
+    },
+  ]
+  let h = History::{ operations: ops, }
+  let cfg = CheckConfig::{
+    time_budget_ms: 60000,
+    max_states: 200000,
+    allow_unknown_results: false,
+  }
+  let verdict = match check(h, m, cfg) {
+    Linearizable => true
+    Violation(_) => false
+    Unknown(_) => false
+  }
+  assert_true(
+    verdict,
+    msg="check 必须接受读到任一集合成员（API.md §2 set 契约）",
+  )
+  let brute = brute_force_linearizable(ops, m)
+  assert_true(
+    brute,
+    msg="暴力基准必须与 Model::accepts 契约一致，接受 Value(2)",
+  )
 }
