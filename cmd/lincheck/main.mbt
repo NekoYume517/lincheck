@@ -614,18 +614,11 @@ pub fn no_witness_reason_text(
 }
 
 ///|
-/// 带缩进的操作列表
-fn render_ops_indented(ops : Array[@lib.Operation]) -> String {
-  let sb = StringBuilder()
-  for op in ops {
-    sb.write_string("    · 操作 ")
-    sb.write_string(op.id.to_string())
-    sb.write_string(": ")
-    sb.write_string(@lib.op_line(op))
-    sb.write_string("\n")
-  }
-  sb.to_string()
-}
+/// `minimize` 文本出口的操作清单**不再自己实现**：`@lib.render_witness_ops` 是这
+/// 条清单唯一的渲染器（`check` 的 `render_violation` 也用它）。旧写法在这里放了
+/// 一份逐字节等价的私有拷贝 `render_ops_indented`，于是同一个文本形状有两处实现，
+/// `WITNESS_LIST_MAX_LINES` 这类上界只能加在一处、另一处永远是漏洞
+/// （2026-11-24 审计 LC-32）。
 
 ///|
 fn cmd_minimize(cli : Cli) -> Int32 raise {
@@ -730,12 +723,14 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
         // 无法复现这个「见证」，此时宣称 non-linearizable 是把脚本当猴耍
         // —— 它会把这个历史记成一个已证实的 bug。未知就写 unknown。
         let verdict = if confirmed { "non-linearizable" } else { "unknown" }
+        // 一条命令只产出**一个** JSON 文档（`API.md` §7.1 的四种形状）。
+        // 旧实现在「见证未能复现」时再补打一行 `{"note":…,"reason":…}`：形状表里
+        // 没有它、`json_shape_wbtest.mbt` 也没锁它，而它承载的语义（「这个违规
+        // 没能复现」）已经由 verdict=`unknown` + reason=`unconfirmed-witness` +
+        // 退出码 3 三重表达。第二份文档对 `jq .verdict` 这类「读一个文档」的脚本
+        // 是多余输出，对按文档数分支的脚本则是一次无文档可依的分支
+        // （2026-11-24 审计 LC-33）。
         println(json_violation(v, history, verdict))
-        if !confirmed {
-          println(
-            "{\"note\":\"witness could not be re-confirmed by check\",\"reason\":\"witness chain broken\"}",
-          )
-        }
       } else {
         println(if confirmed { "✗ NON-LINEARIZABLE" } else { "? UNKNOWN" })
         println("")
@@ -744,7 +739,7 @@ fn cmd_minimize(cli : Cli) -> Int32 raise {
           "  再验证：\{if confirmed { "仍违规 ✓" } else { "未能复现 ✗" }}",
         )
         println("")
-        println(render_ops_indented(v.ops))
+        println(@lib.render_witness_ops(v.ops))
         println("")
         println("  \{v.explanation}")
       }
