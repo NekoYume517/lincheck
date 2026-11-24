@@ -10,6 +10,12 @@ pub const MAX_GENERATED_OPS : Int32 = 10_000_000
 
 pub const MIN_WITNESS : Int32 = 2
 
+pub const TIMELINE_MAX_COLS : Int32 = 512
+
+pub const TIMELINE_MAX_ROWS : Int32 = 64
+
+pub const WITNESS_LIST_MAX_LINES : Int32 = 200
+
 pub fn[M : Model] candidate_accepted(Array[Operation], Array[Operation], M, CheckConfig, Int32, Expl?) -> Bool
 
 pub fn check(History, AnyModel, CheckConfig) -> CheckOutcome
@@ -111,6 +117,8 @@ pub fn remove_chunk(Array[Operation], Int32, Int32) -> Array[Operation]
 pub fn render_timeline(History) -> String
 
 pub fn render_violation(Violation, History) -> String
+
+pub fn render_witness_ops(Array[Operation]) -> String
 
 pub fn repeat_char(Char, Int32) -> String
 
