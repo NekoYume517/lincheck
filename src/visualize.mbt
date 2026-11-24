@@ -99,51 +99,105 @@ pub fn process_ids(history : History) -> Array[Int32] {
 }
 
 ///|
+/// 时间轴最多画多少行（= 多少个进程）。
+///
+/// 行数是 `visualize` 输出里唯一**会随历史规模线性增长**的维度：每行一个历史
+/// 里出现过的进程，`gen --processes 100000 --ops 1` 于是产出 100004 行 / 7.1 MB。
+/// 画布总尺寸是 `行数 × (列数 + 标签宽)`，两个维度都不设上界时输出随输入增长，
+/// 一条诊断命令会在完全合法的历史上下不出东西（2026-11-24 审计 LC-31）。
+pub const TIMELINE_MAX_ROWS : Int32 = 64
+
+///|
+/// 时间轴每行最多画多少列。
+///
+/// 列数由「该进程有多少个操作」决定：顺次执行的 5000 个操作要塞进 5000 根横条，
+/// 每根至少 `label + 2` 列，于是单行宽度 ≈ 30000 列。行数还有上界时，总输出仍
+/// 是 `行数上限 × 单行宽度` —— 一个「1 个胖进程 + 上万个瘦进程」的历史就能让
+/// 输出爆到几百 MB（实测 7000 个操作 → 84.5 MB）。两个维度必须同时有上界。
+pub const TIMELINE_MAX_COLS : Int32 = 512
+
+///|
+/// 见证子集的操作清单最多列多少行。
+///
+/// 清单是「一个操作一行」，见证子集最大可达整份历史：`--ops 24000` 的违规历史
+/// 会让 `check` 打出两万多行。与时间轴同口径：上界不得随见证规模增长，截断必须
+/// 明写，完整字段由 `check --json` 的 `witness` 数组承载。
+pub const WITNESS_LIST_MAX_LINES : Int32 = 200
+
+///|
 /// 单个进程一行的横条布局结果（内部实现细节，故 `priv`）
+///
+/// `undrawn` / `clipped` 是**截断记账**，不是布局细节：它们决定时间轴末尾要不要
+/// 明写「这一行还有东西没画出来」。静默截断与不截断一样坏——读者会把「画出来的
+/// 部分」当成「全部」。
 priv struct RowLayout {
   cells : Array[Char]
   width : Int32
+  // 整条横条落在列宽上限之外、一个字符都没画出来的操作数
+  undrawn : Int32
+  // 横条画了，但（文字或右端）被列宽上限截断的操作数
+  clipped : Int32
 }
 
 ///|
-/// 给一个进程内的操作分配列位置，写出横条
+/// 给一个进程内的操作分配列位置，写出横条。
+///
+/// `max_cols` 是单行像素级上界：`cells.length()` 永不超过它。横条按 `(start, id)`
+/// 升序排过，`start_col` 因此单调不减 —— 一旦某一根横条连 `[]` 都放不下
+/// （`start_col > max_cols - 2`），后面所有横条都只会更靠右，直接停止并记账。
 fn layout_row(
   ops : Array[Operation],
   tmin : Int64,
   span : Int64,
   scale : Int32,
+  max_cols : Int32,
 ) -> RowLayout {
   let cells : Array[Char] = []
   let mut cursor = 0
-  for op in ops {
+  let mut drawn = 0
+  let mut clipped = 0
+  let last_col = max_cols - 1
+  let mut i = 0
+  while i < ops.length() {
+    let op = ops[i]
     let label = op_summary(op)
     let need = label.length() + 2 // 左右方括号
     let want_start = col_of(op.start, tmin, span, scale)
     let want_end = col_of(op.end, tmin, span, scale)
     let start_col = if want_start > cursor { want_start } else { cursor }
+    if start_col > last_col - 1 {
+      break
+    }
     // 右边界：既要覆盖真实结束时间，又要放得下文字
     let min_end = start_col + need - 1
-    let end_col = if want_end > min_end { want_end } else { min_end }
+    let mut end_col = if want_end > min_end { want_end } else { min_end }
+    if end_col > last_col {
+      // 右端顶到上限：横条与文字都不可能完整，如实记账
+      end_col = last_col
+      clipped = clipped + 1
+    }
     // 补齐到 start_col
     while cells.length() < start_col {
       cells.push(' ')
     }
     cells.push('[')
     let chars = label.to_array()
-    let mut i = 0
+    let mut k = 0
     let inner = end_col - start_col - 1
-    while i < inner {
-      if i < chars.length() {
-        cells.push(chars[i])
+    while k < inner {
+      if k < chars.length() {
+        cells.push(chars[k])
       } else {
         cells.push(' ')
       }
-      i = i + 1
+      k = k + 1
     }
     cells.push(']')
     cursor = end_col + 2 // 至少空一列
+    drawn = drawn + 1
+    i = i + 1
   }
-  { cells, width: cells.length(), }
+  { cells, width: cells.length(), undrawn: ops.length() - drawn, clipped, }
 }
 
 ///|
@@ -161,6 +215,25 @@ fn layout_row(
 /// 注意这只改**渲染**，不改判定：`start > end` 的退出码仍由 `check` 的
 /// `Unknown`（3）决定，`docs/exit-codes.md` 的契约一个字都不动。
 fn render_ops(ops : Array[Operation], scale : Int32) -> String {
+  render_ops_bounded(ops, scale, TIMELINE_MAX_ROWS, TIMELINE_MAX_COLS)
+}
+
+///|
+/// 时间轴渲染本体，带显式上界（`render_ops` 用默认上界调它）。
+///
+/// **契约**：输出尺寸 ≤ `max_rows × (max_cols + 标签宽 + 3) + 常量`
+/// （轴一行、至多 9 行截断说明），与历史规模无关；截断时必写清
+/// 「几个进程没画」「哪些行有操作没画」「完整数据去哪拿」。
+///
+/// 为什么两个维度都要上界：只限行数时单行宽度仍随「某进程的操作数」增长
+/// （5000 个顺次操作 ≈ 30000 列），只限列宽时行数仍随进程数增长
+/// （100000 进程 → 100004 行）。任缺一个都是无上界（LC-31）。
+fn render_ops_bounded(
+  ops : Array[Operation],
+  scale : Int32,
+  max_rows : Int32,
+  max_cols : Int32,
+) -> String {
   if ops.length() == 0 {
     return "(空历史)\n"
   }
@@ -185,22 +258,30 @@ fn render_ops(ops : Array[Operation], scale : Int32) -> String {
   // 旧写法在这里是「每个操作线性扫一遍已见进程号」+「每个进程再扫一遍全部
   // 操作」，等价 O(操作数 × 进程数)（2026-11-21 审计 LC-24）。
   let (procs, groups) = group_by_process(ops)
+  // 行上界：只给**前** max_rows 个进程布局（procs 已升序，故截断点确定）。
+  // 没画的行连布局都不做——它们的 cells 数组也是一份按操作数增长的真实内存，
+  // 只省输出不省内存的话，10 万进程的历史照样把堆占满。
+  let row_count = if procs.length() > max_rows {
+    max_rows
+  } else {
+    procs.length()
+  }
   // 每个进程按 (start, id) 排序（compare_ops 用显式三分支，避免减法溢出）
   let rows : Array[RowLayout] = []
   let mut max_w = 1
-  for i in 0..<procs.length() {
+  for i in 0..<row_count {
     let mine = groups[i]
     mine.sort_by(compare_ops)
-    let layout = layout_row(mine, tmin, span, scale)
+    let layout = layout_row(mine, tmin, span, scale, max_cols)
     if layout.width > max_w {
       max_w = layout.width
     }
     rows.push(layout)
   }
-  // 标签列宽
+  // 标签列宽（只按画出来的行算：没画的行的进程号不该把整张图推宽）
   let mut label_w = 0
-  for p in procs {
-    let l = "proc \{p}".length()
+  for i in 0..<row_count {
+    let l = "proc \{procs[i]}".length()
     if l > label_w {
       label_w = l
     }
@@ -209,7 +290,7 @@ fn render_ops(ops : Array[Operation], scale : Int32) -> String {
   // 组装
   let sb = StringBuilder()
   let mut r = 0
-  while r < procs.length() {
+  while r < row_count {
     let label = "proc \{procs[r]}"
     sb.write_string(pad_right(label, label_w))
     sb.write_char('|')
@@ -231,13 +312,106 @@ fn render_ops(ops : Array[Operation], scale : Int32) -> String {
   sb.write_char('+')
   sb.write_string(repeat_char('-', max_w + 2))
   sb.write_string("> 时间  [\{tmin}..\{tmax}]\n")
+  append_timeline_truncation_notes(sb, procs, rows, row_count, max_cols)
   sb.to_string()
+}
+
+///|
+/// 时间轴的截断记账：两类事实各写一句，且两句的**行数都有上界**。
+///
+/// 只写「已截断」而不写「截了多少」等于让读者自己猜；把每行都列一遍则又把
+/// 输出拉回 O(进程数)。所以明细最多列 8 行，其余折成计数。
+fn append_timeline_truncation_notes(
+  sb : StringBuilder,
+  procs : Array[Int32],
+  rows : Array[RowLayout],
+  row_count : Int32,
+  max_cols : Int32,
+) -> Unit {
+  let omitted_rows = procs.length() - row_count
+  if omitted_rows > 0 {
+    sb.write_string(
+      "（时间轴已截断：历史里共 \{procs.length()} 个进程，只画出前 \{row_count} 个（proc \{procs[0]}..proc \{procs[row_count - 1]}）；其余 \{omitted_rows} 个进程没有对应的行。完整数据见 `lincheck check --json` 的 witness 数组）\n",
+    )
+  }
+  // 列宽截断：先汇总，再列至多 8 行明细
+  let mut affected = 0
+  let mut undrawn_total = 0
+  let mut clipped_total = 0
+  for i in 0..<row_count {
+    let l = rows[i]
+    if l.undrawn > 0 || l.clipped > 0 {
+      affected = affected + 1
+    }
+    undrawn_total = undrawn_total + l.undrawn
+    clipped_total = clipped_total + l.clipped
+  }
+  if affected > 0 {
+    sb.write_string(
+      "（列宽上限 \{max_cols} 列：共 \{undrawn_total} 个操作整条横条落在上限之外没画出来，\{clipped_total} 个横条被行尾截断；受影响的行 \{affected} 行",
+    )
+    let mut listed = 0
+    let mut i = 0
+    while i < row_count && listed < 8 {
+      let l = rows[i]
+      if l.undrawn > 0 || l.clipped > 0 {
+        sb.write_string(
+          "\n    · proc \{procs[i]}：未画出 \{l.undrawn} 个、行尾截断 \{l.clipped} 个",
+        )
+        listed = listed + 1
+      }
+      i = i + 1
+    }
+    if affected > listed {
+      sb.write_string(
+        "\n    · …其余 \{affected - listed} 行同形，不再列出",
+      )
+    }
+    sb.write_string(
+      "\n  完整时间戳见 `lincheck check --json` 的 witness 数组）\n",
+    )
+  }
 }
 
 ///|
 /// 文本时间轴：每行一个进程，操作画成横条
 pub fn render_timeline(history : History) -> String {
   render_ops(history.operations, 48)
+}
+
+///|
+/// 见证子集的操作清单：一行一个操作（`render_violation` 与 CLI 的 `minimize`
+/// **共用这一份**）。
+///
+/// 抽出来的理由是「一个判断只有一处」：CLI 里曾有一份逐字节等价的私有拷贝
+/// （`cmd/lincheck/main.mbt` 的 `render_ops_indented`），于是同一个文本形状有
+/// 两个实现，上界只能加在一处 —— 而 `minimize` 走的正是没加界的那一份
+/// （2026-11-24 审计 LC-32）。
+///
+/// 行数上界 `WITNESS_LIST_MAX_LINES`：见证子集最大可达整份历史，清单因此必须
+/// 与见证规模脱钩，并在截断时写出「共多少、列了多少」。
+pub fn render_witness_ops(ops : Array[Operation]) -> String {
+  let sb = StringBuilder()
+  let shown = if ops.length() > WITNESS_LIST_MAX_LINES {
+    WITNESS_LIST_MAX_LINES
+  } else {
+    ops.length()
+  }
+  let mut i = 0
+  while i < shown {
+    sb.write_string("    · 操作 ")
+    sb.write_string(ops[i].id.to_string())
+    sb.write_string(": ")
+    sb.write_string(op_line(ops[i]))
+    sb.write_string("\n")
+    i = i + 1
+  }
+  if ops.length() > shown {
+    sb.write_string(
+      "    …（已截断：见证共 \{ops.length()} 个操作，只列出前 \{shown} 个；其余 \{ops.length() - shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+    )
+  }
+  sb.to_string()
 }
 
 ///|
@@ -258,13 +432,7 @@ pub fn render_violation(v : Violation, history : History) -> String {
   // 逐条列出
   sb.write_string("  冲突操作：\n")
   let sorted = sort_ops_by_id(witness)
-  for op in sorted {
-    sb.write_string("    · 操作 ")
-    sb.write_string(op.id.to_string())
-    sb.write_string(": ")
-    sb.write_string(op_line(op))
-    sb.write_string("\n")
-  }
+  sb.write_string(render_witness_ops(sorted))
   sb.write_string("\n")
   if v.explanation.length() > 0 {
     sb.write_string("  ")

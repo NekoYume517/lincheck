@@ -83,18 +83,33 @@ test "LC-24: 300 个进程的渲染行序 = 进程号升序，行数 = 进程数
     k = k + 1
   }
   let text = render_timeline(h)
-  // 行数 = 300 个进程行 + 1 条时间轴
+  // 行数 = 行上界（`TIMELINE_MAX_ROWS`，64）个进程行 + 1 条时间轴 + 1 条截断说明。
+  //
+  // 这里原本断言 `lines == 301`（300 个进程全画）。LC-31（2026-11-24 审计）给
+  // 时间轴的行数加了上界，因为行数是唯一随进程数线性增长的维度
+  // （`--processes 100000` → 100004 行 / 7.1 MB），一条诊断命令会在完全合法
+  // 的历史上下不出东西。本测试的**原意**是「装桶与行序正确」，不是「行数 =
+  // 进程数」，所以改成锁「画出来的前 N 行仍是进程号升序且连续」+「截断说明
+  // 如实报总数」。行数本身由 `lc31_32_render_bounds_test.mbt` 另行钉住。
   let mut lines = 0
   for ch in text {
     if ch == '\n' {
       lines = lines + 1
     }
   }
-  assert_eq(lines, 301)
-  // 行序 = 进程号升序：'proc 0' 在 'proc 299' 之前，且没有 'proc 300'
-  assert_true(text.contains("proc 0  "))
-  assert_true(text.contains("proc 299"))
+  assert_eq(lines, TIMELINE_MAX_ROWS + 2)
+  // 行序 = 进程号升序：画出来的 64 行正好是 proc 0..proc 63，一行不多一行不少。
+  let mut p = 0
+  while p < TIMELINE_MAX_ROWS {
+    assert_true(text.contains("proc \{p} "))
+    p = p + 1
+  }
+  // 超出上界的进程不画（不出现幽灵行），但必须在说明里被计数
+  assert_false(text.contains("proc 64 "))
+  assert_false(text.contains("proc 299"))
   assert_false(text.contains("proc 300"))
+  assert_true(text.contains("历史里共 300 个进程，只画出前 64 个"))
+  assert_true(text.contains("其余 236 个进程没有对应的行"))
 }
 
 ///|
