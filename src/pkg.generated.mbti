@@ -18,6 +18,8 @@ pub const TIMELINE_MAX_ROWS : Int32 = 64
 
 pub const WITNESS_LIST_MAX_LINES : Int32 = 200
 
+pub const WITNESS_MAX_ENTRIES : Int32 = 200
+
 pub fn[M : Model] candidate_accepted(Array[Operation], Array[Operation], M, CheckConfig, Int32, Expl?) -> Bool
 
 pub fn check(History, AnyModel, CheckConfig) -> CheckOutcome

@@ -398,7 +398,24 @@ fn json_violation(
   sb.write_string("\",\"total\":")
   sb.write_string(history.length().to_string())
   sb.write_string(",\"witness\":[")
-  for i, op in v.ops {
+  // **序列化上界**（LC-37 续修）：`witness` 条数严格等于历史操作数，每条是六字段
+  // 对象，于是这条命令的输出随输入线性增长（实测 51/151/401 条操作 → 3540/10644/
+  // 28644 字节）。JSON 是给程序消费的出口，比文本更怕无界。
+  //
+  // 截断**只在这里**发生：内存里的 `v.ops` 一字不动 —— `minimize` 的删除复验、
+  // `witness_ok` 的复现检查都读 `ops` 本身，砍了它们会静默失效。
+  //
+  // 被截断时额外输出 `witness_total` / `witness_truncated`，让下游能区分
+  // 「就这么多」与「被砍过」。未截断时这两个键**不出现**，`API.md` §7.1 的
+  // 四种形状逐字节不变（`json_shape_wbtest.mbt` 继续锁着它们）。
+  let witness_shown = if v.ops.length() > @lib.WITNESS_MAX_ENTRIES {
+    @lib.WITNESS_MAX_ENTRIES
+  } else {
+    v.ops.length()
+  }
+  let mut i = 0
+  while i < witness_shown {
+    let op = v.ops[i]
     if i > 0 {
       sb.write_string(",")
     }
@@ -415,8 +432,15 @@ fn json_violation(
     sb.write_string(",\"end\":")
     sb.write_string(op.end.to_string())
     sb.write_string("}")
+    i = i + 1
   }
-  sb.write_string("],\"depth\":")
+  sb.write_string("]")
+  if v.ops.length() > witness_shown {
+    sb.write_string(",\"witness_total\":")
+    sb.write_string(v.ops.length().to_string())
+    sb.write_string(",\"witness_truncated\":true")
+  }
+  sb.write_string(",\"depth\":")
   sb.write_string(v.depth.to_string())
   sb.write_string("}")
   sb.to_string()
@@ -620,7 +644,7 @@ pub fn check_witness_text(v : @lib.Violation) -> String {
   }
   if v.ops.length() > shown {
     sb.write_string(
-      "  …（已截断：见证共 \{v.ops.length()} 个操作，只列出前 \{shown} 个；其余 \{v.ops.length() - shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+      "  …（已截断：见证共 \{v.ops.length()} 个操作，只列出前 \{shown} 个；其余 \{v.ops.length() - shown} 个见 `lincheck check --json` 的 witness 数组，该数组自身以 `witness_total` 标明真实条数、可能同样只给前 \{@lib.WITNESS_MAX_ENTRIES} 条）\n",
     )
   }
   sb.to_string()

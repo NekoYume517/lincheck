@@ -616,7 +616,11 @@ fn build_explanation(
     // 80/160/320 条操作的解释分别是 6820/14009/… 字节，正是 2 倍的关系。
     //
     // 与 `render_witness_ops` / `order_facts` 同一个口径：固定行数上界 + 如实
-    // 记账。完整数据由 `check --json` 的 `witness` 数组承载，那里不受此限。
+    // 记账。**JSON 出口也有自己的上界**（`WITNESS_MAX_ENTRIES`，LC-37 续修）：
+    // 这里曾经写过「完整数据由 `check --json` 的 witness 数组承载，那里不受此限」，
+    // 而实测 `check --json` 的 witness 条数严格等于历史操作数、输出随输入线性
+    // 增长 —— 那句话等于用一行注释把「输出随输入线性增长」合法化了。现在两个
+    // 出口各自有界，读者要以 `witness_total` 判断自己看到的是不是全部。
     let shown = if prefix.length() > EXPL_PREFIX_MAX_LINES {
       EXPL_PREFIX_MAX_LINES
     } else {
@@ -635,7 +639,7 @@ fn build_explanation(
     }
     if prefix.length() > shown {
       sb.write_string(
-        "  …（已截断：最长一致前缀共 \{prefix.length()} 个操作，只列出前 \{shown} 个；其余 \{prefix.length() - shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+        "  …（已截断：最长一致前缀共 \{prefix.length()} 个操作，只列出前 \{shown} 个；其余 \{prefix.length() - shown} 个见 `lincheck check --json` 的 witness 数组，该数组自身以 `witness_total` 标明真实条数、可能同样只给前 \{WITNESS_MAX_ENTRIES} 条）\n",
       )
     }
     sb.write_string("  此后模型状态 = ")
@@ -692,7 +696,7 @@ fn build_explanation(
       }
       if before.length() > before_shown {
         sb.write_string(
-          "  …（已截断：被迫先于它完成的操作共 \{before.length()} 个，只列出前 \{before_shown} 个；其余 \{before.length() - before_shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+          "  …（已截断：被迫先于它完成的操作共 \{before.length()} 个，只列出前 \{before_shown} 个；其余 \{before.length() - before_shown} 个见 `lincheck check --json` 的 witness 数组，该数组自身以 `witness_total` 标明真实条数、可能同样只给前 \{WITNESS_MAX_ENTRIES} 条）\n",
         )
       }
     }

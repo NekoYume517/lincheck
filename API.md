@@ -340,12 +340,24 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
 |---|---|---|
 | `verdict` | 结论本身（`linearizable` / `non-linearizable` / `unknown`） | 全部 |
 | `total` | **输入历史**的操作数 | 除 `unknown` 外的全部 |
-| `witness` | 见证子集；**条数由数组长度承载**（没有单独的计数字段） | `non-linearizable` 两种 |
+| `witness` | 见证子集，**最多 `WITNESS_MAX_ENTRIES`（200）条**；未截断时条数由数组长度承载 | `non-linearizable` 两种 |
+| `witness_total` | 见证的**真实**操作数（> 200 时才出现） | 只有 witness 被截断时 |
+| `witness_truncated` | `true`：`witness` 只给了前 200 条 | 只有 witness 被截断时 |
 | `witness[i].id` / `.process` / `.start` / `.end` | 该操作的原样字段 | 有见证时 |
 | `witness[i].op` / `.result` | `kind_label` / `result_label` 的文本 | 有见证时 |
 | `depth` | **该见证**的最长一致前缀长度 | 只有**存在见证**的形状 |
 | `reason` | 结论的成因 | `unknown`（散文）与违规（分类 token） |
 | `cause` | NoWitness 的**成因分类**：`data-inconsistency` / `concurrency-race` / `unknown`（复检没下结论） | 只有 `minimize` 的 `no-explainable-witness` 形状 |
+
+`witness` 的条数上界（2026-11-26 审计 LC-37 续修）：见证子集最大可达整份历史，
+而 `witness` 每条是六字段对象，于是 `check --json` 曾随输入线性增长（实测
+51/151/401 条操作 → 3540/10644/28644 字节）。现在序列化最多输出前
+`WITNESS_MAX_ENTRIES = 200` 条 —— **截断只发生在序列化这一步**，内存里的
+`Violation.ops` 保持完整（`minimize` 的删除复验与 `witness_ok` 的复现检查读 `ops`
+本身）。被截断时额外输出 `witness_total` / `witness_truncated`，下游据此判断
+「看到的是不是全部」；未截断时这两个键不出现，上面四种形状逐字节不变。
+`total` 与 `witness_total` 是两个不同的量（输入历史 vs 见证子集），不是同一个量
+两个键名。
 
 三条不变量：
 
@@ -363,6 +375,10 @@ lincheck selfcheck --model register --seeds 100        # 元测试：生成的�
    N 个搜索节点）」/「历史包含 N 个未知结果（Nil）…」/「操作 X 的时间区间非法…」），
    供人读懂「为什么没有结论」。同一个语义槽（为什么是这个 verdict），
    两种取值域，语义不同但槽位相同。
+4. **不许静默截断。** 任何有上界的出口，超界时必须显式记账。JSON 的
+   `witness` 超界给 `witness_total` + `witness_truncated`；文本的三个清单
+   （见证、一致前缀、被迫先于）给「共 N 个 / 只列出前 K 个 / 其余怎么取」。
+   悄悄砍过的数组比无界更糟 —— 下游会把「被砍过的」当成「完整的」。
 
 `witness` 数组**顺序由库层决定**（`build_violation` 按 id 升序，
 `checker_test.mbt` 的 `violation_ops_are_sorted_by_id` 锁着）；CLI 只渲染，

@@ -131,6 +131,28 @@ pub const TIMELINE_MAX_COLS : Int32 = 512
 pub const WITNESS_LIST_MAX_LINES : Int32 = 200
 
 ///|
+/// `check --json` 的 `witness` 数组最多序列化多少个操作。
+///
+/// **为什么 JSON 出口也要上界**（LC-37 续修）：`witness` 条数严格等于历史操作数，
+/// 每条是一个六字段对象。实测 `check --json` 在 51/151/401 条操作的历史上分别
+/// 输出 3540/10644/28644 字节，线性增长。JSON 是给程序消费的出口，**更**怕无界 ——
+/// 下游解析器会被一份上亿操作的 `witness` 直接打死。
+///
+/// 曾经 `EXPL_PREFIX_MAX_LINES` 的文档写「完整数据由 `check --json` 的 `witness`
+/// 数组承载，那里不受此限」，等于用一行注释把「输出随输入线性增长」合法化了。
+/// 这条红线本项目已经判过四次（LC-31 时间轴行列、LC-32 minimize 清单、LT35
+/// decode、CB-1/CB-2 复杂度），JSON 不是豁免理由。
+///
+/// **截断只发生在序列化这一步**：内存里的 `Violation.ops` 保持完整 —— `minimize`
+/// 的删除复验、`witness_ok` 的复现检查都读 `ops` 本身，砍了它们会静默失效。
+/// 被截断时 JSON 额外输出 `witness_total`（真实条数）与 `witness_truncated`，
+/// 未截断时这两个键不出现（`API.md` §7.1 的四种形状逐字节不变）。
+///
+/// 取值与 `WITNESS_LIST_MAX_LINES` 一致，这样「文本清单列了前 N 条」与
+/// 「JSON 给了前 N 条」对得上同一个 N，读者不会在两处看到不同的截断点。
+pub const WITNESS_MAX_ENTRIES : Int32 = 200
+
+///|
 /// 单个进程一行的横条布局结果（内部实现细节，故 `priv`）
 ///
 /// `undrawn` / `clipped` 是**截断记账**，不是布局细节：它们决定时间轴末尾要不要
