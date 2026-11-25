@@ -266,6 +266,61 @@ test "LC-35: 单行画布格数永不超过 TIMELINE_MAX_COLS" {
 }
 
 ///|
+/// **轴线的上界口径**：轴线是唯一允许超过 `TIMELINE_MAX_COLS` 的行。
+///
+/// 它承载的是坐标刻度而不是操作数据，且长度与历史规模无关（只随标签宽和时间
+/// 范围的十进制位数变化）。`render_ops_bounded` 的文档与 `TIMELINE_MAX_COLS`
+/// 的注释都写明了这一点；这条测试把它钉住，免得日后有人「顺手」把轴线也塞进
+/// `max_cols` 里 —— 那会把时间范围截成读不出来的半截数字。
+///
+/// 同时断言横条行**确实**守住了上界，防止「把两者混为一谈」的反向错误。
+test "LC-35: 轴线可超上界但横条行不可，且两者都与规模无关" {
+  let ops : Array[Operation] = []
+  let mut i = 0
+  while i < 128 {
+    ops.push(Operation::{
+      id: i,
+      process: 0,
+      kind: Append(0),
+      result: Ok,
+      start: 0L,
+      end: 0L,
+    })
+    i = i + 1
+  }
+  let out = render_timeline(History::{ operations: ops, })
+  let mut axis_len = 0
+  let mut max_bar_cells = 0
+  for line in out.split("\n").collect() {
+    let s = line.to_owned()
+    if s.contains("时间") {
+      axis_len = s.length()
+      continue
+    }
+    let mut pipe = -1
+    for i, ch in s.to_array() {
+      if ch == '|' {
+        pipe = i
+        break
+      }
+    }
+    if pipe < 0 {
+      continue
+    }
+    let cells = s.length() - pipe - 1
+    if cells > max_bar_cells {
+      max_bar_cells = cells
+    }
+  }
+  // 横条行守上界
+  assert_true(max_bar_cells <= TIMELINE_MAX_COLS)
+  assert_eq(max_bar_cells, TIMELINE_MAX_COLS)
+  // 轴线更长（因为它追加了「> 时间 [a..b]」说明），且有界
+  assert_true(axis_len > max_bar_cells)
+  assert_true(axis_len < max_bar_cells + 64)
+}
+
+///|
 /// **off-by-one 的精确锁**：右端**恰好**落在最后一列的横条不得记成「被截断」。
 ///
 /// 构造法：`A0`（`Append(0)` 的摘要，长 2）→ `need = 4`。所有操作取
