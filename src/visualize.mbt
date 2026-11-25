@@ -223,20 +223,30 @@ fn layout_row(
     // `TIMELINE_MAX_COLS = 512`。所以闸门必须看**这一行画上去之后的尾部**。
     let cur_len = if would_create { 0 } else { lanes[lane].length() }
     let base = if cur_len > start_col { cur_len } else { start_col }
+    // 连 `[]` 都放不下（左括号已经到/越过最后一列）：整根不画，停止。
+    //
+    // `base` 与 `start_col` 都只增不减，后面只会更靠右，所以直接 break；
+    // 少画的条数由 `undrawn = 总数 - drawn` 记账（含本根与之后全部）。
+    if base + 1 > last_col {
+      break
+    }
     // 右边界：既要覆盖真实结束时间，又要放得下文字
     let min_end = start_col + need - 1
     let mut end_col = if want_end > min_end { want_end } else { min_end }
     if end_col < base + need - 1 {
       end_col = base + need - 1
     }
-    if end_col >= max_cols {
-      // 这一步会踩到列宽上界：连整根横条（含文字）都放不下，就不画。
-      // `start_col` 与 cells 尾部都只增不减，后面只会更靠右，直接停止；
-      // 少画的条数由 `undrawn = 总数 - drawn` 记账（含本根与之后全部）。
-      break
+    // `end_col` 不能低于 `base`：否则 `inner` 为负、`]` 会被 push 在上一根的
+    // 尾巴之后，把 cells 顶出 `max_cols`。
+    if end_col < base + 1 {
+      end_col = base + 1
     }
-    if end_col >= last_col {
-      // 右端顶到上限：横条画得下，但右端被钳在最后一列 —— 如实记账
+    if end_col > last_col {
+      // 右端**超出**最后一列：钳到 last_col，横条画了但有损 —— 如实记账。
+      //
+      // 判据必须是 `>` 而不是 `>=`：`end_col == last_col` 时 `]` 正好落在最后一列，
+      // 整根横条完整画出来了，不是截断。写成 `>=` 会把每行一根完整横条错记成
+      // 被截断（实测 4 进程 × 120 操作恒报 `1 个横条被行尾截断`，而那一根其实完整）。
       end_col = last_col
       clipped = clipped + 1
     }
@@ -258,8 +268,26 @@ fn layout_row(
     }
     cells.push('[')
     let chars = label.to_array()
+    // 内层要填多少格，由**目标右端**反推。
+    //
+    // `end_col` 是 `]` 的**下标**：压完 `]` 后 `cells.length()` 必须等于
+    // `end_col + 1`。当前 `cells.length()` 已经包含刚 push 的 `[`，所以
+    // 内层格数 = `end_col + 1 - 1 - cells.length() = end_col - cells.length()`。
+    //
+    // 写成 `end_col + 1 - cells.length()` 会多填一格，压完 `]` 后长度变成
+    // `end_col + 2` —— 钳到 `last_col` 的那一根于是在 513 列收尾，把单行宽度
+    // 顶出 `max_cols`（实测 170 个 Reader 时 `cells = 513`，而上限是 512）。
+    //
+    // 关键不变量：`end_col <= last_col`（上面钳过），所以压完 `]` 后
+    // `cells.length() <= max_cols` —— 单行宽度的硬上界由这里保证。
+    let inner = end_col - cells.length()
+    if inner < 0 {
+      // `cells` 已经越过目标右端：这一根放不下任何内容格，回滚 `[` 并停止。
+      // 不回滚会留下没有配对的括号。
+      let _ = cells.pop()
+      break
+    }
     let mut k = 0
-    let inner = end_col - cells.length() + 1
     while k < inner {
       if k < chars.length() {
         cells.push(chars[k])
