@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub const EXPL_PREFIX_MAX_LINES : Int32 = 64
+
 pub const MAX_GENERATED_OPS : Int32 = 10_000_000
 
 pub const MIN_WITNESS : Int32 = 2

@@ -95,6 +95,20 @@ pub fn CheckConfig::default() -> CheckConfig {
   { time_budget_ms: 5000, max_states: 200_000, allow_unknown_results: false, }
 }
 
+///|
+/// 违规解释里「最长一致前缀」最多逐条列多少个操作。
+///
+/// **为什么需要这个上界**（LC-37）：前缀长度就是搜索的最长一致前缀 `depth`，
+/// 而它可以等于历史操作数。逐条打印会让 `explanation` 的字节数与输入规模线性
+/// 增长 —— 实测 80/160/320 条操作分别产出 6820/14009/… 字节，正是 2 倍关系。
+/// 这一段同时经两个出口到达用户：`check` 的文本输出、`check --json` 的
+/// `explanation` 字段，两个都会被撑爆。
+///
+/// 取值与 `WITNESS_LIST_MAX_LINES`（见证清单 200 行）同量级但更小：前缀清单是
+/// 「搜索过程叙述」，读者关心的是**从哪一步开始走不通**；具体每一步的字段由
+/// `check --json` 的 `witness` 数组承载，那里不受本上界约束。
+pub const EXPL_PREFIX_MAX_LINES : Int32 = 64
+
 // ============================================================
 // 搜索上下文
 // ============================================================
@@ -597,12 +611,32 @@ fn build_explanation(
     sb.write_string(
       "\n最长一致前缀（可以按这个顺序解释）：\n",
     )
-    for step, idx in prefix {
+    // **必须有上界**（LC-37）：`prefix` 的长度就是 `depth`，而 `depth` 可以等于
+    // 历史操作数 —— 逐条打印会让解释文本随输入规模线性增长。实测
+    // 80/160/320 条操作的解释分别是 6820/14009/… 字节，正是 2 倍的关系。
+    //
+    // 与 `render_witness_ops` / `order_facts` 同一个口径：固定行数上界 + 如实
+    // 记账。完整数据由 `check --json` 的 `witness` 数组承载，那里不受此限。
+    let shown = if prefix.length() > EXPL_PREFIX_MAX_LINES {
+      EXPL_PREFIX_MAX_LINES
+    } else {
+      prefix.length()
+    }
+    let mut k = 0
+    while k < shown {
+      let step = k
+      let idx = prefix[k]
       sb.write_string("  ")
       sb.write_string((step + 1).to_string())
       sb.write_string(". ")
       sb.write_string(format_op(ops[idx]))
       sb.write_string("\n")
+      k = k + 1
+    }
+    if prefix.length() > shown {
+      sb.write_string(
+        "  …（已截断：最长一致前缀共 \{prefix.length()} 个操作，只列出前 \{shown} 个；其余 \{prefix.length() - shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+      )
     }
     sb.write_string("  此后模型状态 = ")
     sb.write_string(state_to_string(state))
@@ -641,10 +675,25 @@ fn build_explanation(
       sb.write_string(
         "\n被迫先于它完成的操作（end < start，二者不并发）：\n",
       )
-      for op in before {
+      // 与上面的前缀清单同口径（LC-37）：`before` 是「整份历史里 happens-before
+      // 该失败操作的全部操作」，规模上界就是历史操作数。逐条打印同样会让解释
+      // 文本随输入线性增长。这里独立给上界并如实记账。
+      let before_shown = if before.length() > EXPL_PREFIX_MAX_LINES {
+        EXPL_PREFIX_MAX_LINES
+      } else {
+        before.length()
+      }
+      let mut b = 0
+      while b < before_shown {
         sb.write_string("  ")
-        sb.write_string(format_op(op))
+        sb.write_string(format_op(before[b]))
         sb.write_string("\n")
+        b = b + 1
+      }
+      if before.length() > before_shown {
+        sb.write_string(
+          "  …（已截断：被迫先于它完成的操作共 \{before.length()} 个，只列出前 \{before_shown} 个；其余 \{before.length() - before_shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+        )
       }
     }
   } else {
