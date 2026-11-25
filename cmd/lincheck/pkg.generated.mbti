@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn check_witness_text(@src.Violation) -> String
+
 pub fn jsonl_error_text(String, Error) -> String
 
 pub fn no_witness_cause(@src.CheckOutcome) -> String

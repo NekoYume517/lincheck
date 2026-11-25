@@ -568,10 +568,7 @@ fn cmd_check(cli : Cli) -> Int32 raise {
           "✗ NON-LINEARIZABLE  (\{v.ops.length()} / \{history.length()} 个操作)",
         )
         println("")
-        for op in v.ops {
-          println("  \{@lib.op_line(op)}")
-        }
-        println("")
+        println(check_witness_text(v))
         println("  \{v.explanation}")
       }
       EXIT_VIOLATION
@@ -588,6 +585,46 @@ fn cmd_check(cli : Cli) -> Int32 raise {
 }
 
 // ── minimize ──────────────────────────────────────────────────────────
+
+///|
+
+///|
+/// `check` 文本出口的见证操作清单（一行一个操作，缩进两格）。
+///
+/// **必须有行数上界**（LC-37 的第二处）：见证子集可能等于整份历史，逐条打印会
+/// 让这条命令的输出随输入规模线性增长 —— 实测 301 / 601 / 1201 条操作的
+/// `check` 文本分别是 17610 / 28914 / 52527 字节，全部来自这一段。
+///
+/// 旧写法在这里直接 `for op in v.ops { println(...) }`，既没有上界、又是
+/// `@lib.render_witness_ops` 之外的第二份见证清单实现 —— 与 LC-32 同一个模子
+/// （私有拷贝绕过共享渲染器，上界只能加在一处，另一处永远是漏洞）。
+///
+/// 这里是**保留下来**的一份而非删除：两个出口的文本形状不同（这里是
+/// `  <op>`，`render_witness_ops` 是 `    · 操作 N: <op>`），直接复用会改变
+/// `check` 的可观测输出。但上界口径必须与它一致，所以共用
+/// `@lib.WITNESS_LIST_MAX_LINES`。
+///
+/// 标 `pub` 仅为可测性（理由同 `parse_int_arg`）：主包的 `*_test.mbt` 只能看到
+/// pub 符号，而 stdout 在测试里取不到。
+pub fn check_witness_text(v : @lib.Violation) -> String {
+  let sb = StringBuilder()
+  let shown = if v.ops.length() > @lib.WITNESS_LIST_MAX_LINES {
+    @lib.WITNESS_LIST_MAX_LINES
+  } else {
+    v.ops.length()
+  }
+  let mut i = 0
+  while i < shown {
+    sb.write_string("  \{@lib.op_line(v.ops[i])}\n")
+    i = i + 1
+  }
+  if v.ops.length() > shown {
+    sb.write_string(
+      "  …（已截断：见证共 \{v.ops.length()} 个操作，只列出前 \{shown} 个；其余 \{v.ops.length() - shown} 个的完整字段见 `lincheck check --json` 的 witness 数组）\n",
+    )
+  }
+  sb.to_string()
+}
 
 ///|
 /// `NoWitness` 结语：按**再查一次**的结论分流成因，三态必须透传。
