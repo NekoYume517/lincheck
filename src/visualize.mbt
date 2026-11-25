@@ -131,7 +131,13 @@ pub const WITNESS_LIST_MAX_LINES : Int32 = 200
 /// 明写「这一行还有东西没画出来」。静默截断与不截断一样坏——读者会把「画出来的
 /// 部分」当成「全部」。
 priv struct RowLayout {
-  cells : Array[Char]
+  // 每个元素是一条「并列子行」（lane）的 cells。
+  //
+  // 同一进程的操作**可以并发**（区间重叠即并发，与进程号无关 —— README:109），
+  // 所以横向位置必须**只**由时间戳决定；重叠的操作改为画在叠起来的 lane 上。
+  // 旧实现只有一行、靠「游标」把重叠的横条横向推开，于是把并发渲染成了先后
+  // （2026-11-26 审计 LC-34）。
+  lanes : Array[Array[Char]]
   width : Int32
   // 整条横条落在列宽上限之外、一个字符都没画出来的操作数
   undrawn : Int32
@@ -142,8 +148,25 @@ priv struct RowLayout {
 ///|
 /// 给一个进程内的操作分配列位置，写出横条。
 ///
-/// `max_cols` 是单行像素级上界：`cells.length()` 永不超过它。横条按 `(start, id)`
-/// 升序排过，`start_col` 因此单调不减 —— 一旦某一根横条连 `[]` 都放不下
+/// ## 横向位置只由时间戳决定（LC-34）
+///
+/// 每一根横条的左端列号 = `col_of(op.start)`，右端 = `col_of(op.end)`（放不下
+/// 文字时向右撑到 `label + 2`）。**没有游标**：横条之间不会互相推挤。
+///
+/// 为什么必须这样：时间轴是 `check` 结论的视觉证据，读者从图上读出的顺序约束
+/// 必须真的成立 —— 「A 画在 B 左边」就该蕴含 `happens_before(A, B)`。旧实现用
+/// 游标 `start_col = max(want_start, cursor)` 把同一进程的横条强行串行排开，
+/// 于是 `[0,1000]` 与 `[400,600]` 这种**完全并发**的一对被画成一前一后，图说谎
+/// 而 `check` 说真话。
+///
+/// ## 重叠用并列子行（lane）表示
+///
+/// 同一进程的操作可以并发（区间重叠即并发，与进程号无关）：按 `(start, id)`
+/// 升序依次分配「右端最小的那条 lane」，放不下就新开一条。于是并发看得见（叠起来），
+/// 而顺序也看得见（串行的横条落在同一条 lane 上、横向分离）。
+///
+/// `max_cols` 是单行像素级上界：每条 lane 的 `cells.length()` 永不超过它。横条按
+/// `(start, id)` 升序排过，`start_col` 单调不减 —— 一旦某一根横条连 `[]` 都放不下
 /// （`start_col > max_cols - 2`），后面所有横条都只会更靠右，直接停止并记账。
 fn layout_row(
   ops : Array[Operation],
@@ -152,11 +175,15 @@ fn layout_row(
   scale : Int32,
   max_cols : Int32,
 ) -> RowLayout {
-  let cells : Array[Char] = []
-  let mut cursor = 0
+  let lanes : Array[Array[Char]] = []
+  // 每条 lane 已占到的**几何**右边界（最后一根横条的 end_col），用于渲染不重叠。
+  let geo_ends : Array[Int32] = []
+  // 每条 lane 上最后一根横条的**时间** end，用于判定「时间上是否重叠」。
+  let time_ends : Array[Int64] = []
   let mut drawn = 0
   let mut clipped = 0
   let last_col = max_cols - 1
+  let mut max_w = 0
   let mut i = 0
   while i < ops.length() {
     let op = ops[i]
@@ -164,26 +191,75 @@ fn layout_row(
     let need = label.length() + 2 // 左右方括号
     let want_start = col_of(op.start, tmin, span, scale)
     let want_end = col_of(op.end, tmin, span, scale)
-    let start_col = if want_start > cursor { want_start } else { cursor }
-    if start_col > last_col - 1 {
-      break
+    let start_col = want_start
+    // 选一条 lane。
+    //
+    // 判据只有一条，且它是**正确性**判据：`time_ends[lane] <= op.start` ——
+    // 上一条横条的时间结束不晚于这一条的时间开始，二者不并发，才可以并排。
+    // 重叠（真并发）必须叠到不同的 lane 上，否则「左 ⇒ 先」被破坏（LC-34）。
+    //
+    // 放不下文字时**允许几何重叠**：`]` 会盖住上一根的尾巴。这是有意的取舍 ——
+    // 横向位置必须忠实于时间戳，宁可字符互相覆盖也不能为了好看把横条推开
+    // （推开就是伪造顺序）。若改用「几何放得下」作判据，`[0,10]`/`[10,20]`
+    // 这种顺次历史会因为标签撑宽而被拆成多层，串行顺序反而看不出来。
+    //
+    // 多条 lane 都可用时取几何右端最小的那条，让图尽量紧凑。
+    let mut lane = -1
+    let mut li = 0
+    while li < lanes.length() {
+      if time_ends[li] <= op.start {
+        if lane < 0 || geo_ends[li] < geo_ends[lane] {
+          lane = li
+        }
+      }
+      li = li + 1
     }
+    let would_create = lane < 0
+    // **列宽上界的真正闸门**。
+    //
+    // 横向位置只由时间戳决定之后，多根横条会落到同一列（`col_of` 的结果上限
+    // 就是 `scale`），此时横条被**依次**追加到 cells 末尾，行长度随操作数线性
+    // 增长。只看 `start_col` 会漏判：`--ops 1200` 实测单行 6009 列，而
+    // `TIMELINE_MAX_COLS = 512`。所以闸门必须看**这一行画上去之后的尾部**。
+    let cur_len = if would_create { 0 } else { lanes[lane].length() }
+    let base = if cur_len > start_col { cur_len } else { start_col }
     // 右边界：既要覆盖真实结束时间，又要放得下文字
     let min_end = start_col + need - 1
     let mut end_col = if want_end > min_end { want_end } else { min_end }
-    if end_col > last_col {
-      // 右端顶到上限：横条与文字都不可能完整，如实记账
+    if end_col < base + need - 1 {
+      end_col = base + need - 1
+    }
+    if end_col >= max_cols {
+      // 这一步会踩到列宽上界：连整根横条（含文字）都放不下，就不画。
+      // `start_col` 与 cells 尾部都只增不减，后面只会更靠右，直接停止；
+      // 少画的条数由 `undrawn = 总数 - drawn` 记账（含本根与之后全部）。
+      break
+    }
+    if end_col >= last_col {
+      // 右端顶到上限：横条画得下，但右端被钳在最后一列 —— 如实记账
       end_col = last_col
       clipped = clipped + 1
     }
-    // 补齐到 start_col
+    if would_create {
+      lanes.push([])
+      geo_ends.push(-1)
+      time_ends.push(-9223372036854775807L)
+      lane = lanes.length() - 1
+    }
+    let cells = lanes[lane]
     while cells.length() < start_col {
       cells.push(' ')
+    }
+    // 若本根左端落在上一根尾巴之前（时间相邻但标签撑宽），从那里接上
+    if cells.length() < base {
+      while cells.length() < base {
+        cells.push(' ')
+      }
     }
     cells.push('[')
     let chars = label.to_array()
     let mut k = 0
-    let inner = end_col - start_col - 1
+    let inner = end_col - cells.length() + 1
     while k < inner {
       if k < chars.length() {
         cells.push(chars[k])
@@ -193,11 +269,18 @@ fn layout_row(
       k = k + 1
     }
     cells.push(']')
-    cursor = end_col + 2 // 至少空一列
+    geo_ends[lane] = cells.length() - 1
+    time_ends[lane] = op.end
+    if cells.length() > max_w {
+      max_w = cells.length()
+    }
     drawn = drawn + 1
     i = i + 1
   }
-  { cells, width: cells.length(), undrawn: ops.length() - drawn, clipped, }
+  if lanes.length() == 0 {
+    lanes.push([])
+  }
+  { lanes, width: max_w, undrawn: ops.length() - drawn, clipped, }
 }
 
 ///|
@@ -287,24 +370,35 @@ fn render_ops_bounded(
     }
   }
   label_w = label_w + 2
-  // 组装
+  // 组装。每个进程占 `lanes.length()` 行：第一行带进程标签，其余行留空对齐，
+  // 这样读者一眼能看出哪几根横条是并发（叠在同一进程的多行上）。
   let sb = StringBuilder()
   let mut r = 0
   while r < row_count {
     let label = "proc \{procs[r]}"
-    sb.write_string(pad_right(label, label_w))
-    sb.write_char('|')
     let layout = rows[r]
-    let mut c = 0
-    while c < max_w {
-      if c < layout.cells.length() {
-        sb.write_char(layout.cells[c])
+    let lanes = layout.lanes
+    let mut ln = 0
+    while ln < lanes.length() {
+      if ln == 0 {
+        sb.write_string(pad_right(label, label_w))
       } else {
-        sb.write_char(' ')
+        sb.write_string(repeat_char(' ', label_w))
       }
-      c = c + 1
+      sb.write_char('|')
+      let cells = lanes[ln]
+      let mut c = 0
+      while c < max_w {
+        if c < cells.length() {
+          sb.write_char(cells[c])
+        } else {
+          sb.write_char(' ')
+        }
+        c = c + 1
+      }
+      sb.write_char('\n')
+      ln = ln + 1
     }
-    sb.write_char('\n')
     r = r + 1
   }
   // 底部时间轴
