@@ -507,11 +507,45 @@ fn[M : Model] dfs(
         match ctx.cache.get(key) {
           Some(_) => {
             ctx.cache_hits = ctx.cache_hits + 1
-            // 命中即失败：不记录进度、不写缓存
-            stack.pop() |> ignore
-            if frame.via >= 0 {
-              remaining[frame.via] = true
-              ignore(path.pop())
+            // 命中即失败：不记录进度、不写缓存。
+            //
+            // `(状态, 剩余集合)` 相同就是同一个子问题，缓存里记着"已判死"，
+            // 于是**从最近那个已判死的祖先到栈顶的这一整条链**都无解。旧实现
+            // 只弹掉命中节点自己，父节点于是再查一次缓存、再命中、再弹一层：
+            // 理顺下来是 O(命中次数 × 深度) —— 实测 n=10 的缓存密集历史
+            // 命中 3628799 次、访问 9864101 个节点，命中省下的不是整棵子树，
+            // 只是自己那一个节点（LC-42 其二）。
+            //
+            // 但不能就地 `return false`：命中的节点往往自己**还没试完候选**，
+            // 把它一并算成"整棵子树失败"就会漏掉兄弟分支（第一版正是这么写，
+            // `lc41` 的 seed=15 立刻从 Linearizable 变成 Violation）。正确做法
+            // 是把归纳结论折回**最近一个「已展开且键在缓存里」的祖先**，弹掉
+            // 那条链；它的兄弟是上层节点的候选，不在链上。
+            //
+            // 命中仍发生在「记账 → 超时 → 终止检查」之后，时间预算照旧能截住
+            // 缓存密集阶段（`audit_cache_budget_test.mbt` 的两条实测继续管用）。
+            let mut closest_hit = -1
+            let mut scan = top
+            while scan >= 0 {
+              let f = stack[scan]
+              if f.expanded && f.key.length() > 0 && ctx.cache.contains(f.key) {
+                closest_hit = scan
+                break
+              }
+              if !f.expanded {
+                break
+              }
+              scan = scan - 1
+            }
+            if closest_hit < 0 {
+              closest_hit = top
+            }
+            while stack.length() > closest_hit {
+              let f = stack.pop().unwrap()
+              if f.via >= 0 {
+                remaining[f.via] = true
+                ignore(path.pop())
+              }
             }
             continue
           }
