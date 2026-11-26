@@ -192,7 +192,7 @@ fn cache_key(state : State, remaining : Array[Bool]) -> String {
 /// O(操作数) 的函数，节点入口若无条件调用它，总开销就是 O(n²)。这个计数器
 /// 让「调用次数不随 n 平方增长」成为一条可断言的、零噪声的判据；
 /// 生产路径上它只是一个自增，不改变任何语义。
-let cache_key_calls : Ref[Int] = { val: 0 }
+let cache_key_calls : Ref[Int32] = { val: 0, }
 
 ///|
 /// 位串的**紧凑展开**编码（LC-39）。

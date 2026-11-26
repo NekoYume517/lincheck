@@ -62,7 +62,7 @@ fn lc39_reset_key_calls() -> Unit {
 }
 
 ///|
-fn lc39_key_calls() -> Int {
+fn lc39_key_calls() -> Int32 {
   cache_key_calls.val
 }
 
@@ -78,7 +78,7 @@ fn lc39_serial_history(n : Int32) -> History {
       kind: Write(i),
       result: Ok,
       start: i.to_int64() * 2L,
-      end: (i.to_int64() * 2L) + 1L,
+      end: i.to_int64() * 2L + 1L,
     })
   }
   { operations: ops, }
@@ -118,7 +118,7 @@ test "LC-39: 串行历史的搜索节点数等于操作数加一" {
 test "LC-39: 直线搜索不随操作数平方地构造缓存键" {
   let m : AnyModel = Register(register_model())
   let cfg = { ..CheckConfig::default(), time_budget_ms: 0, }
-  let calls = fn(n : Int32) -> Int {
+  let calls = fn(n : Int32) -> Int32 {
     lc39_reset_key_calls()
     let (outcome, _) = check_with_stats(lc39_serial_history(n), m, cfg)
     ignore(outcome)
@@ -128,7 +128,9 @@ test "LC-39: 直线搜索不随操作数平方地构造缓存键" {
   let big = calls(4000)
   // 线性/常量：big ≤ small + 一个小的常数；平方：big ≈ 400 × small
   if big > small * 2 + 16 {
-    println("LC-39: cache_key 调用 small(n=200)=\{small} big(n=4000)=\{big}（应为常量级）")
+    println(
+      "LC-39: cache_key 调用 small(n=200)=\{small} big(n=4000)=\{big}（应为常量级）",
+    )
     assert_true(false)
   }
 }
