@@ -64,6 +64,10 @@ pub fn inject_violation(History, AnyModel, Int32) -> History
 
 pub fn kind_label(OpKind) -> String
 
+pub fn max_fold_depth() -> Int32
+
+pub fn max_fold_depth_reset() -> Unit
+
 pub fn[M : Model] minimal_witness(Array[Operation], Array[Operation], M, CheckConfig, Int32, Expl) -> Array[Operation]?
 
 pub fn minimize(History, AnyModel, CheckConfig) -> Violation

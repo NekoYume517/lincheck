@@ -195,6 +195,29 @@ fn cache_key(state : State, remaining : Array[Bool]) -> String {
 let cache_key_calls : Ref[Int32] = { val: 0, }
 
 ///|
+/// 命中折叠深度的**全局上界**（LC-44 引理的可观测口）。
+///
+/// 每次折行时累积 `top - closest_hit` 的最大值。按 LC-44 的引理，「缓存键在
+/// 祖先链上互不相同」⇒ 任何命中都只能折到节点自己 ⇒ 该上界恒为 0。
+/// 一旦有人引入"祖先与后代共享同一 `remaining`"的搜索形态，这里会先变大，
+/// 折叠的语义假设就要重新论证。
+///
+/// 与 `cache_key_calls` 同样：生产路径上只是两次整数比较，不改变语义。
+let max_fold_depth_val : Ref[Int32] = { val: 0, }
+
+///|
+/// 读当前观测到的最大折叠深度（测试用）。
+pub fn max_fold_depth() -> Int32 {
+  max_fold_depth_val.val
+}
+
+///|
+/// 清零折叠深度上界（测试用）。
+pub fn max_fold_depth_reset() -> Unit {
+  max_fold_depth_val.val = 0
+}
+
+///|
 /// 位串的**紧凑展开**编码（LC-39）。
 ///
 /// ## 为什么要换编码
@@ -540,6 +563,9 @@ fn[M : Model] dfs(
             if closest_hit < 0 {
               closest_hit = top
             }
+            if top - closest_hit > max_fold_depth_val.val {
+              max_fold_depth_val.val = top - closest_hit
+            }
             while stack.length() > closest_hit {
               let f = stack.pop().unwrap()
               if f.via >= 0 {
@@ -600,15 +626,27 @@ fn[M : Model] dfs(
           Nil,
         )
       }
-      // **`max_states <= 0` = 完全关闭缓存**（LC-42）。旧写法把「没满」写成
-      // `cache.length() < max_states`，`max_states = 0` 时 `0 < 0` 恒假，
-      // 第一个要写缓存的节点就置位 `cache_full` —— 看着像"关掉了"，实际与
-      // "上限 1" 同档：条目 0、命中 0、键一次也不构造。文档承诺的是「完全
-      // 关闭（用于验证缓存不改变语义）」，而调用方靠 `cache_size = 0` / 键
-      // 构造次数判断"这一路是否真的没有缓存"时，会被这个口径误导。
+      // **`max_states <= 0` = 完全关闭缓存**（LC-42a）。契约措辞是「`<= 0` 完全关闭
+      // （用于验证缓存不改变语义）」，本早退让代码与这句话在实现层一致。
       //
-      // 查询侧不需要另加判断：它只看 `cache` 是否非空，关闭时表恒空，
-      // 于是「零命中、零条目、零键构造」由同一个不变量同时成立。
+      // ⚠️ **这条改动不可观测，勿当作行为修复引用**（第二十一轮实测）：`max_states
+      // <= 0` 与 `max_states == 1` 在可观测输出上**无法区分** ——
+      // `n ∈ {3,4,5}` × `ms ∈ {0,1,200000}` 的缓存密集历史，新旧两种写法
+      // `cache_size` / `cache_hits` / 键构造次数 / 判定四项**逐字节相同**：
+      //
+      //   旧写法  `if !ctx.cache_full {`              →  ms=0: size=0 hits=0
+      //   新写法  `if !ctx.cache_full && ms > 0 {`    →  ms=0: size=0 hits=0
+      //
+      // 原因：`max_states = 0` 时旧写法 `cache.length() < 0` 也是恒假，走 `else`
+      // 置 `cache_full = true`；但 `cache` 长度始终为 0，于是查询侧（只看表是否
+      // 非空）一次键都不构造 —— 「零命中、零条目、零键构造」本来就成立。
+      // 真正让「上限 1」看起来关掉的不是 `0 < 0`，而是 `1 < 1`：上限 1 时第一条
+      // 写不进、立即 `cache_full`，size 恒 0（见 `lc43_cache_off_property_test.mbt`
+      // 的判据二）。上一轮曾把这条记成 P2 行为缺陷，评级已在报告里更正为
+      // P4（口径澄清，无可观测差异）。
+      //
+      // 保留早退的理由只有一条：多一次整数比较换取"关闭 ⇒ 不进写缓存分支"的
+      // 结构性直白，代价为零。
       if !ctx.cache_full && config.max_states > 0 {
         if ctx.cache.length() < config.max_states {
           // 键可能是惰性化后留下的空串（入口时缓存为空、且从未写过失败记录），
