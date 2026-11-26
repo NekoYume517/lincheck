@@ -72,7 +72,7 @@ fn lc42_dense(n : Int32) -> History {
 
 ///|
 fn lc42_cfg(max_states : Int32) -> CheckConfig {
-  { time_budget_ms: 0, max_states, allow_unknown_results: false }
+  { time_budget_ms: 0, max_states, allow_unknown_results: false, }
 }
 
 ///|
@@ -120,11 +120,15 @@ test "LC-42: max_states = 1 与 0 行为不同（上限 1 允许一条条目）"
   let m = register_model()
   let (outcome1, stats1) = check_with_stats(h, m, lc42_cfg(1))
   if lc42_verdict(outcome1) == "Unknown" {
-    println("LC-42: max_states=1 在 n=6 历史上给出 Unknown（不应走到超时）")
+    println(
+      "LC-42: max_states=1 在 n=6 历史上给出 Unknown（不应走到超时）",
+    )
     assert_true(false)
   }
   if stats1.cache_size != 1 {
-    println("LC-42: max_states=1 的 cache_size=\{stats1.cache_size}（应为 1）")
+    println(
+      "LC-42: max_states=1 的 cache_size=\{stats1.cache_size}（应为 1）",
+    )
     assert_true(false)
   }
   if stats1.cache_hits == 0 {
@@ -146,7 +150,9 @@ test "LC-42: 缓存条目数不得超过 max_states 且不改变判定" {
       assert_true(false)
     }
     if lc42_verdict(outcome) != base_verdict {
-      println("LC-42: max_states=\{k} 改写了判定（\{base_verdict} -> \{lc42_verdict(outcome)}）")
+      println(
+        "LC-42: max_states=\{k} 改写了判定（\{base_verdict} -> \{lc42_verdict(outcome)}）",
+      )
       assert_true(false)
     }
   }
