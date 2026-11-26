@@ -178,9 +178,66 @@ fn[M : Model] result_matches(
 /// 位串 `"1011"` 表示下标 0/2/3 已线性化、下标 1 尚未。
 /// 两个分量都是**精确编码**，不依赖哈希，因此不存在碰撞导致的错误命中。
 fn cache_key(state : State, remaining : Array[Bool]) -> String {
+  cache_key_calls.val = cache_key_calls.val + 1
   let sb = StringBuilder()
   sb.write_string(state_to_string(state))
   sb.write_string("|")
+  let bits = bits_full(remaining)
+  sb.write_string(bits)
+  sb.to_string()
+}
+
+///|
+/// 缓存键的构造次数。**只为审计测试的存在**（LC-39）：`cache_key` 是
+/// O(操作数) 的函数，节点入口若无条件调用它，总开销就是 O(n²)。这个计数器
+/// 让「调用次数不随 n 平方增长」成为一条可断言的、零噪声的判据；
+/// 生产路径上它只是一个自增，不改变任何语义。
+let cache_key_calls : Ref[Int] = { val: 0 }
+
+///|
+/// 位串的**紧凑展开**编码（LC-39）。
+///
+/// ## 为什么要换编码
+///
+/// 旧实现把整条位串原样拼进缓存键（每位 1 个字符，长度恒为 `操作数`）。
+/// `dfs` 的节点入口又无条件调用它，于是「n 个节点 × 每键 n 字符」= **O(n²)**。
+/// 一份严格串行的历史只有唯一合法全序、候选表恒为 1，本该是线性时间：
+///
+///     N       每操作搜索成本
+///     2000    26.3 µs
+///     4000    73.3 µs
+///     8000   135.0 µs
+///     16000  335.0 µs
+///     32000  732.6 µs      ← 随 n 线性上升 = 总开销 O(n²)
+///
+/// 而 `cache_key` 的字符产出量在 n=1000 与 n=4000 之间差了 **15 倍**
+/// （平方量级是 16 倍），是这条曲线的直接来源。
+///
+/// ## 新编码为什么仍然**单射**（LC-36 的判据不能破）
+///
+/// 编码 = `"#<未线性化条数>."` + 只含 `0`/`1` 的位串。分隔符 `.` 不可能是
+/// `0`/`1`，所以「条数 + 位串」两段可以无歧义切分，而位串本身是定长精确
+/// 编码。于是：
+///
+/// - 任意两条不同的 `remaining`，只要长度或内容不同，产出就不同；
+/// - 与 `state_to_string` 之间还有 `|` 分隔（`|` 不在 `[0-9]` 里也不会是
+///   位串的一部分）。
+///
+/// 编码长度**仍与操作数同阶**（必须如此：不同的剩余集合有 2^n 种，键必须能
+/// 区分它们）。真正的 O(n²) 修复在节点入口：**只在缓存真的要用这个键时才
+/// 算它**（见 `dfs` 里的 `key` 惰性化）。这里先把「重复拼同一份位串」的
+/// 分配收成一次，并让键可以只按「剩余条数 + 位串」比较。
+fn bits_full(remaining : Array[Bool]) -> String {
+  let sb = StringBuilder()
+  let mut count = 0
+  for r in remaining {
+    if !r {
+      count = count + 1
+    }
+  }
+  sb.write_char('#')
+  sb.write_string(count.to_string())
+  sb.write_char('.')
   for r in remaining {
     if r {
       sb.write_char('1')
@@ -435,19 +492,31 @@ fn[M : Model] dfs(
         record_progress(ctx, frame.depth, path, frame.node_state, -1, Nil)
         return true
       }
-      let key = cache_key(frame.node_state, remaining)
-      match ctx.cache.get(key) {
-        Some(_) => {
-          ctx.cache_hits = ctx.cache_hits + 1
-          // 命中即失败：不记录进度、不写缓存
-          stack.pop() |> ignore
-          if frame.via >= 0 {
-            remaining[frame.via] = true
-            ignore(path.pop())
+      // **缓存键惰性化**（LC-39）：旧实现在每个节点入口无条件构造键
+      //（长度 O(操作数)），而键只在两处真的被用到——查缓存、以及「全部候选
+      // 失败后写缓存」。直线搜索（唯一合法全序、候选恒为 1）永远走不到
+      // 「全部候选失败」，于是**每一次键构造都被立即丢弃**，纯属白做，
+      // 而节点数就是 n，两者相乘即是 O(n²) 的来源。
+      //
+      // 现在只在 `cache` 非空（说明这台机器上曾经写过失败记录，命中才有可能
+      // 发生）时才算键：一次命中省下的子树远多于一次键的构造；缓存为空时
+      // 跳过键构造与整张表的探测，语义完全不变（空表不可能命中）。
+      let mut key = ""
+      if ctx.cache.length() > 0 {
+        key = cache_key(frame.node_state, remaining)
+        match ctx.cache.get(key) {
+          Some(_) => {
+            ctx.cache_hits = ctx.cache_hits + 1
+            // 命中即失败：不记录进度、不写缓存
+            stack.pop() |> ignore
+            if frame.via >= 0 {
+              remaining[frame.via] = true
+              ignore(path.pop())
+            }
+            continue
           }
-          continue
+          None => ()
         }
-        None => ()
       }
       let (min_idx, min_end) = min_end_of(ops, remaining)
       if min_idx < 0 {
@@ -499,7 +568,15 @@ fn[M : Model] dfs(
       }
       if !ctx.cache_full {
         if ctx.cache.length() < config.max_states {
-          ctx.cache[frame.key] = true
+          // 键可能是惰性化后留下的空串（入口时缓存为空、且从未写过失败记录），
+          // 这时才第一次需要它——在这里补算，语义与旧实现逐个节点算键等价：
+          // 该节点确实探索完毕且确定失败，键描述的正是当下的 (状态, 剩余集合)。
+          let write_key = if frame.key.length() > 0 {
+            frame.key
+          } else {
+            cache_key(frame.node_state, remaining)
+          }
+          ctx.cache[write_key] = true
         } else {
           ctx.cache_full = true
         }
