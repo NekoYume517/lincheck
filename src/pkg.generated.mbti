@@ -46,6 +46,10 @@ pub fn[M : Model] ddmin(Array[Operation], M, CheckConfig, Int32) -> Array[Operat
 
 pub fn[M : Model] ddmin_bounded(Array[Operation], M, CheckConfig, Int32, Int32, Expl?) -> Array[Operation]
 
+pub fn ddmin_candidate_count() -> Int32
+
+pub fn explain_probe_counts() -> (Int32, Int32)
+
 pub fn[M : Model] explainable(Array[Operation], M, CheckConfig, Expl) -> Bool
 
 pub fn format_op(Operation) -> String
@@ -129,6 +133,8 @@ pub fn render_violation(Violation, History) -> String
 pub fn render_witness_ops(Array[Operation]) -> String
 
 pub fn repeat_char(Char, Int32) -> String
+
+pub fn reset_minimize_counters() -> Unit
 
 pub fn result_label(OpResult) -> String
 
