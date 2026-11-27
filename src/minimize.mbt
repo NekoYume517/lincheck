@@ -198,6 +198,59 @@ pub fn Expl::new() -> Expl {
 }
 
 ///|
+/// 最小化过程中「可解释性守卫实际跑了多少次判定」的确定性计数器（LC-46）。
+///
+/// ## 为什么需要它（而不是测时间）
+///
+/// LC-46 的现象是 `minimize` 在 801 条历史上要跑 25–250 秒，而 `check` 只要
+/// 0.05 秒。第一版回归测试写的是 `minimize 耗时 / check 耗时 < 100` ——
+/// 那是**环境因变量**：同一工具链、同一条命令，Lead 机器实测比值在
+/// 469 / 647 / 751 之间跳，本机是 ~3000，全取决于 CPU 快慢和有没有别的活。
+/// 拿它当契约，修好那天可能因为换了机器而**还红着**，那就不是锁，是噪声。
+///
+/// 所以改用 O(k³) 的**直接等价物**：判定次数。它是确定性的整数，同一历史
+/// 在任何机器上都得同一个值。下面三个计数器分别对应成本的三层：
+///
+/// - `illegal_probes`：`illegal_status` 缓存未命中、真跑了一次 `probe_ops`；
+/// - `pair_probes`：`pair_status` 缓存未命中、真跑了一次 `probe_ops`
+///   （LC-46 的主犯：旧写法对**每个**操作都扫遍**每个**同伴）；
+/// - `ddmin_candidates`：ddmin 试过的候选数。
+///
+/// LC-46 修前的成本模型是「k 个操作 × k 个同伴 × O(k) 个候选」≈ k³。修后
+/// 「两趟筛选」把 `pair_probes` 从 k² 压到「只对孤立非法的操作数 × k」。
+/// 这两者的差是**整数差**，可以直接写进断言。
+///
+/// 与 `checker.mbt` 的 `cache_key_calls` 同一约定：生产路径上只是一次自增，
+/// 不改变任何语义；只在测试里读写。
+let illegal_probes : Ref[Int32] = { val: 0, }
+
+///|
+let pair_probes : Ref[Int32] = { val: 0, }
+
+///|
+let ddmin_candidates : Ref[Int32] = { val: 0, }
+
+///|
+/// 读可解释性守卫的判定次数（测试用）：`(illegal_status 未命中数, pair_status 未命中数)`。
+pub fn explain_probe_counts() -> (Int32, Int32) {
+  (illegal_probes.val, pair_probes.val)
+}
+
+///|
+/// 读 ddmin 试过的候选数（测试用）。
+pub fn ddmin_candidate_count() -> Int32 {
+  ddmin_candidates.val
+}
+
+///|
+/// 清零三个最小化计数器（测试用）。
+pub fn reset_minimize_counters() -> Unit {
+  illegal_probes.val = 0
+  pair_probes.val = 0
+  ddmin_candidates.val = 0
+}
+
+///|
 /// 单个操作是否孤立非法：`None` = 本次检查没有结论。
 ///
 /// 只有 Linearizable / Violation 才能写入确定结果缓存。Unknown 既不是合法，
@@ -215,6 +268,7 @@ fn[M : Model] Expl::illegal_status(
     Some(v) => Some(v)
     None => {
       let single : Array[Operation] = [op]
+      illegal_probes.val = illegal_probes.val + 1
       match probe_ops(single, model, config) {
         Violation(_) => {
           self.illegal[key] = true
@@ -265,6 +319,8 @@ fn[M : Model] Expl::pair_status(
     Some(v) => Some(v)
     None => {
       let pair : Array[Operation] = [a, b]
+      // LC-46：这一行就是 O(k²) 的来源，也是新判据直接依赖的量。
+      pair_probes.val = pair_probes.val + 1
       match probe_ops(pair, model, config) {
         Linearizable => {
           self.pairs[key] = true
@@ -462,6 +518,7 @@ fn[M : Model] ddmin_bounded_trace(
       while i < current.length() && !found && probes < DDMin_MAX_PROBES {
         let candidate = remove_chunk(current, i, chunk)
         probes = probes + 1
+        ddmin_candidates.val = ddmin_candidates.val + 1
         if candidate_accepted_trace(
             current, candidate, model, config, min_witness, expl, unknown,
           ) {
