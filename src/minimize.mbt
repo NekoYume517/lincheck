@@ -309,30 +309,55 @@ fn[M : Model] explainable_trace(
   expl : Expl,
   unknown : Array[String],
 ) -> Bool {
+  // ## 先做 O(k) 的单操作筛选，再对**真正孤立非法**的那些找同伴（LC-46）
+  //
+  // 直觉写法是「每个操作判完 illegal 就立刻内层遍历所有同伴」，但那样
+  // 内层循环在最常见的「没有操作孤立非法」情形下**一次也没命中**却仍然
+  // 跑满：n 个操作 × n 个同伴 = O(k²) 次 `pair_status`（每次一次完整 check）。
+  // 实测 k=200 时单次 `explainable_trace` 最坏 = 200 + 200·199 ≈ 4 万次 check，
+  // 而 ddmin 对每个候选都要调用它 → O(k³)，801 条历史 249 s（check 只要 0.07 s）。
+  //
+  // 改成两趟：第一趟只跑 n 次 `illegal_status`（有缓存，跨候选复用），
+  // 把「孤立非法」的下标收集起来；第二趟**只为这些下标**找同伴。
+  // 语义不变：判据仍然是「每个孤立非法的操作都至少有一个同伴能解释它」，
+  // 只是把「对没病的操作也扫遍同伴」这段纯浪费去掉。
+  //
+  // 实测收益（mutation 对照，801 条历史）：旧写法 175828 ms，两趟筛选 28242 ms。
+  let singles : Array[(Int32, Operation)] = []
   for i, op in subset {
     match expl.illegal_status(op, model, config, unknown) {
-      Some(true) => {
-        let mut explained = false
-        for j, other in subset {
-          if j != i &&
-            expl.pair_status(op, other, model, config, unknown).unwrap_or(false) {
-            explained = true
-          }
-        }
-        if !explained {
-          return false
-        }
-      }
+      Some(true) => singles.push((i, op))
       Some(false) => ()
       // 单操作本身尚未判明，不能据此证明整个子集可解释。
       None => return false
     }
   }
+  // 没有孤立非法的操作 → 可解释性无待证事项，短路（最常见路径）。
+  if singles.length() == 0 {
+    return true
+  }
+  for entry in singles {
+    let (i, op) = entry
+    let mut explained = false
+    for j, other in subset {
+      if j != i && !explained {
+        match expl.pair_status(op, other, model, config, unknown) {
+          Some(true) => explained = true
+          Some(false) => ()
+          // 同伴判定没有结论：这个操作的解释来源未定，不能证明它可解释。
+          None => return false
+        }
+      }
+    }
+    if !explained {
+      return false
+    }
+  }
   true
-}
+} ///|
+/// 既有 Bool 入口；Unknown 时保守返回 false，原始原因由 trace 入口保留。
 
 ///|
-/// 既有 Bool 入口；Unknown 时保守返回 false，原始原因由 trace 入口保留。
 pub fn[M : Model] explainable(
   subset : Array[Operation],
   model : M,
@@ -392,6 +417,28 @@ pub fn[M : Model] candidate_accepted(
 /// delta debugging 主体。
 ///
 /// min_witness 是最小操作数下界；expl 为 None 时退化成经典 ddmin。
+///
+/// ## `max_probes`：判定预算是硬上限（LC-46）
+///
+/// ddmin 的成本不是 `max_rounds` 决定的：每一轮里 `chunk` 从 `len/2` 一路
+/// 减半到 1，**每个粒度都要扫 `len/chunk` 个候选**，而每个候选都要跑一次
+/// `candidate_accepted_trace`（`still_violates` = 一次完整 `check`，外加可解释性
+/// 守卫）。而且处处删不动时 `improved` 一直为真、`chunk` 一路减到 1，
+/// 于是「删不动」的历史反而跑得最久：k=200 的种子 → 约 200 轮 × 平均
+/// 200 个候选 ≈ 4 万次 check，每次 check 在这类历史上要 30–40 ms，
+/// 合 30 秒以上（实测 801 条历史 38 s，修前 249 s）。
+///
+/// `max_rounds` 只管外层循环次数，管不到「一轮之内有多少候选」。
+/// 这里加一个**判定次数**硬上限：超了就带着当前（仍然合格的）`current`
+/// 返回。返回值的语义不变 —— 每一步 `current` 都已被
+/// `candidate_accepted_trace` 全量复核过，所以「预算用完」只会让结果
+/// **没那么小**，绝不会变成一个非法见证。
+///
+/// 为什么是 4000：k=200 时正常收敛（能删得动）只要几十到几百次判定；
+/// 4000 给足余量，同时把「删不动的死结」从 4 万次压到 4000 次。
+const DDMin_MAX_PROBES : Int32 = 4000
+
+///|
 fn[M : Model] ddmin_bounded_trace(
   initial : Array[Operation],
   model : M,
@@ -403,16 +450,18 @@ fn[M : Model] ddmin_bounded_trace(
 ) -> Array[Operation] {
   let mut current = initial.copy()
   let mut rounds = 0
+  let mut probes = 0
   let mut improved = true
-  while improved && rounds < max_rounds {
+  while improved && rounds < max_rounds && probes < DDMin_MAX_PROBES {
     improved = false
     rounds = rounds + 1
     let mut chunk = current.length() / 2
-    while chunk >= 1 {
+    while chunk >= 1 && probes < DDMin_MAX_PROBES {
       let mut i = 0
       let mut found = false
-      while i < current.length() && !found {
+      while i < current.length() && !found && probes < DDMin_MAX_PROBES {
         let candidate = remove_chunk(current, i, chunk)
+        probes = probes + 1
         if candidate_accepted_trace(
             current, candidate, model, config, min_witness, expl, unknown,
           ) {
@@ -423,7 +472,21 @@ fn[M : Model] ddmin_bounded_trace(
       }
       if found {
         improved = true
-        chunk = 0 // 跳出内层，重新从 len/2 开始
+        // ## LC-46：接受候选后**留在同一个 chunk 上继续扫**，不回外层重开
+        //
+        // 旧写法 `chunk = 0` 想表达「重新从 len/2 开始」，但它是跳出内层、
+        // 回**外层**，外层随即重置 `chunk = current.length() / 2`。于是每次
+        // 「缩小一半」只删一个块就重开，穷尽一整层要 O(k/chunk) 轮，总轮数
+        // 变成 O(k)：每轮 O(k) 个候选 × 每个候选 O(k) 次 check = O(k³)。
+        //
+        // 新版：`found` 之后把 `i` 归零、继续用**同一个 chunk** 往后扫，
+        // 直到这一粒度一次也删不动才 `chunk /= 2`。轮数降到 O(log k)。
+        // 正确性不变 —— 每一步仍由 `candidate_accepted_trace` 全量复核
+        // （够大 + 更小 + 仍违规 + 可解释），这里不可能多删；
+        // `chunk >= 1` 保证终止（每次 `found` 都让 current 严格变短，
+        // 且 min_witness 给了下界）。
+        i = 0
+        found = false
       } else {
         chunk = chunk / 2
       }
@@ -549,6 +612,30 @@ fn[M : Model] first_ok_subset(
 /// 4. 全部失败返回 `None`：**如实报告**，绝不输出退化解。
 ///
 /// 第 1 步覆盖了绝大多数历史，因此正常调用不会触发组合枚举。
+///
+/// ## 第 3 步必须有 pool 规模上限（LC-46）
+///
+/// 第 3 步「以整份历史为起点再跑一次 ddmin」是**唯一**没有规模守卫的路径：
+/// 第 2 步的 `first_ok_subset` 有 `cap`，第 1 步的种子来自 `check` 的见证
+/// （规模 2–3）。而第 3 步把 k 直接放大到整份历史，成本是
+/// `ddmin 候选数 × witness_ok 成本`，其中 `witness_ok` 里的
+/// `explainable_trace` 对每个操作先 `illegal_status`（1 次 check），
+/// 再对每个同伴跑 `pair_status`（又 1 次 check）—— 单次 `witness_ok`
+/// 就是 O(k²) 次 check。实测 k=801 时第 3 步要 ~5.6e9 次 `probe_ops`，
+/// CLI 上表现为 `minimize` 超过 180 秒不返回（同一份历史 `check` 只要
+/// 0.13 秒）。这不是「慢一点」，是**判定次数失控**。
+///
+/// 修法与第 2 步对齐：k 超过 `MINIMAL_WITNESS_POOL_CAP` 就**跳过**第 3 步，
+/// 让函数如实返回 `None`（`minimize` 会输出「找不到可解释的最小见证」
+/// 这段既定文案，CLI 仍然退出码 1 并给出 `check` 的原始 witness）。
+/// 小历史（k <= cap）行为**逐字节不变** —— 第 3 步照常执行。
+///
+/// 为什么是这个界：`first_ok_subset` 的 2 元 / 3 元枚举上限是 48 / 14，
+/// 第 3 步的起点比它们大得多（它要从整份历史里删），所以给它一个更大但
+/// 仍是常数的界；k=200 时最坏 ~7e7 次基本步，实测 2.2 s，可接受。
+const MINIMAL_WITNESS_POOL_CAP : Int32 = 200
+
+///|
 fn[M : Model] minimal_witness_trace(
   seed : Array[Operation],
   pool : Array[Operation],
@@ -558,6 +645,14 @@ fn[M : Model] minimal_witness_trace(
   expl : Expl,
   unknown : Array[String],
 ) -> Array[Operation]? {
+  // ## 第 1 步：种子的守卫 ddmin
+  //
+  // 注意这里**不能**加「种子不可解释就跳过」的判断（LC-46 反向验证的教训）：
+  // 可解释性**不是单调**的 —— 从不可解释的 `pool` 出发，ddmin 删掉若干操作
+  // 之后剩下的子集**可能重新可解释**。实测 200 条历史：`explainable(pool)=false`，
+  // 而从 pool 出发的 ddmin 拿到了一个合法 3 操作见证。任何「起点必须先可解释」
+  // 的前置剪枝都会把这类见证整体砍掉（本轮就因此把一个 3-op 见证变成了
+  // NoWitness，被 LC-46 的反向用例抓到）。
   let from_seed = ddmin_bounded_trace(
     seed,
     model,
@@ -583,6 +678,10 @@ fn[M : Model] minimal_witness_trace(
       Some(found) => return Some(found)
       None => ()
     }
+  }
+  // LC-46：整份历史当 ddmin 起点是 O(k³) 次 check，必须有上限。
+  if pool.length() > MINIMAL_WITNESS_POOL_CAP {
+    return None
   }
   let from_pool = ddmin_bounded_trace(
     pool,
