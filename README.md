@@ -37,7 +37,7 @@ A 最后打印出 `2`，合理——B 的写在 A 的读之前就完成了。
 
 ## 快速开始
 
-**作为库依赖**（已发布到 [mooncakes.io](https://mooncakes.io/docs/NekoYume517/lincheck)，当前版本 `0.1.1`）：
+**作为库依赖**（已发布到 [mooncakes.io](https://mooncakes.io/docs/NekoYume517/lincheck)，当前版本 `0.1.2`）：
 
 ```bash
 moon add NekoYume517/lincheck
