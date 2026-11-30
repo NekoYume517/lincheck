@@ -2,7 +2,7 @@
 
 **线性一致性检查器：判断一段并发历史是否合法，并在违规时给出最小反例。**
 
-[![MoonBit](https://img.shields.io/badge/MoonBit-0.1.20261102-blueviolet)](https://www.moonbitlang.com/)
+[![MoonBit](https://img.shields.io/badge/MoonBit-1.0.0--rc1*-blueviolet)](https://www.moonbitlang.com/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ---
@@ -63,7 +63,18 @@ moon run cmd/lincheck -- visualize --history examples/register_bad.jsonl
 
 # 自检：生成的合法历史必须全部通过
 moon run cmd/lincheck -- selfcheck --model register --seeds 100
+
+# 同一个 CLI 也能跑在 js 后端上（CI 会跑；用于确认检查器不依赖 wasm）
+moon run --target js cmd/lincheck -- selfcheck --model register --seeds 100
 ```
+
+**工具链：MoonBit 1.0（`moon 0.1.20261126` / `moonc v1.0.0-rc1`）**，`moon.mod` 里
+`preferred_target = "wasm"`。CI 取 CDN 的 `latest`，然后硬校验 `moon` 不低于
+`0.1.20261124`、`moonc` 不低于 `v1.0.0-rc1`：CDN 只发布 `latest`（带日期的版本 403），
+能钉住的是**语法级别**而不是某个字节版本，所以约束写成「不得更旧」。
+2026-11-30 的工具链 1.0 迁移实测记录见 `../HANDOVER.md` 第三十二节；本仓在
+`moonc v1.0.0-rc1` 上 357 个用例在 `wasm`、`wasm-gc`、`js` 三个后端全过，
+**没有需要改语法的断裂**，只改了一处 js 的 argv 起点。
 
 
 ## 命令
@@ -234,6 +245,7 @@ cmd/lincheck/
 ## License
 
 Apache-2.0，见 [LICENSE](LICENSE)。
+
 
 
 

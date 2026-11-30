@@ -1588,8 +1588,34 @@ pub fn run(argv : Array[String]) -> Int32 {
 }
 
 ///|
+/// `@env.args()` 前面有几个元素不属于本程序。
+///
+/// `@env.args()` 是**整个进程**的命令行。js 后端把解释器也算进去：`node` 是
+/// `argv[0]`、编译产物的路径是 `argv[1]`，而 `run` 把 `argv[1]` 当子命令，于是 js 上
+/// `lincheck check ...` 的子命令被读成那个 `.js` 路径 —— 实测（`moonc v1.0.0-rc1`）
+/// 同一个 `help` 在 wasm/wasm-gc 上 2 个元素、在 js 上 3 个。0.1.20261117 上一样，
+/// 所以这是 js 构建的性质，不是 1.0 引入的。
+///
+/// 做法是把「程序自身」重新放回 index 0 再交给 `run`，`run` 的契约
+/// （`argv[1]` 是子命令）因此一个字没动；js 上丢掉的只是 `node`。
+///
+/// 两条 `#cfg` 声明：`#cfg` 只能挂在声明上，挂在语句上不通过解析。
+#cfg(not(target="js"))
+let argv_prefix : Int32 = 1
+
+///|
+#cfg(target="js")
+let argv_prefix : Int32 = 2
+
+///|
 fn main {
-  let argv = @env.args()
+  let all = @env.args()
+  let argv : Array[String] = Array::new(capacity=all.length())
+  // index 0 留空位放「程序自身」：wasm/wasm-gc 就是 `all[0]`，js 上是 `all[1]`
+  // （`all[0]` 是 node）。
+  for i = argv_prefix - 1; i < all.length(); i = i + 1 {
+    argv.push(all[i])
+  }
   let code = run(argv)
   @sys.exit(code)
 }
